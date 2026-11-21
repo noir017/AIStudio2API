@@ -653,6 +653,15 @@ func (client *cdpClient) callFunctionOn(ctx context.Context, sessionID, objectID
 	return resp.Result, nil
 }
 
+func (client *cdpClient) callFunctionOnString(ctx context.Context, sessionID, objectID, declaration string, args []any, awaitPromise bool) (string, error) {
+	obj, err := client.callFunctionOn(ctx, sessionID, objectID, declaration, args, true, awaitPromise)
+	if err != nil {
+		return "", err
+	}
+	text, _ := obj.Value.(string)
+	return text, nil
+}
+
 func (client *cdpClient) waitFor(ctx context.Context, sessionID, expression string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	waitCtx, cancel := context.WithDeadline(ctx, deadline)

@@ -12,13 +12,16 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Mag1cFall/AIStudio2API/internal/camoufoxnative"
 	"github.com/Mag1cFall/AIStudio2API/internal/waa/prooftime"
+	"github.com/Mag1cFall/AIStudio2API/internal/waa/rhythm"
 )
 
 const (
@@ -42,8 +45,10 @@ type loadedPage struct {
 type Worker struct {
 	mu           sync.Mutex
 	inputMu      sync.Mutex
+	inputWaiters atomic.Int32
 	client       *cdpClient
 	options      Options
+	rhythm       rhythm.Rhythm
 	targetID     string
 	sessionID    string
 	pageObjectID string
@@ -52,6 +57,15 @@ type Worker struct {
 	cookieOrder  map[cookieKey]int
 	// tabs 跟踪正在执行受保护请求或已被 Reload 替换的标签页，键为 sessionID
 	tabs map[string]*tabUse
+	// chats 是可运行界面对话的标签页池，第一个是当前主页面所在的标签页
+	chats []*chatTab
+	// chatsChanged 在界面对话标签页空出、新开结束或 Worker 关闭时关闭并换新
+	chatsChanged chan struct{}
+	// chatOpening 表示正在后台新开界面对话标签页，chatOpenErr 是最近一次新开失败的原因
+	chatOpening bool
+	chatOpenErr error
+	// selected 是外部浏览器中当前激活的 targetID
+	selected string
 	// ownedTargets 记录本 Worker 创建的全部 targetID，Close 时仅关闭这些标签页
 	ownedTargets map[string]struct{}
 	closed       bool
@@ -90,8 +104,12 @@ func Start(ctx context.Context, options Options) (*Worker, error) {
 	worker := &Worker{
 		client:       client,
 		options:      options,
+		rhythm:       options.Rhythm,
 		tabs:         make(map[string]*tabUse),
 		ownedTargets: make(map[string]struct{}),
+	}
+	if worker.rhythm == (rhythm.Rhythm{}) {
+		worker.rhythm = rhythm.New()
 	}
 	failed := true
 	defer func() {
@@ -118,6 +136,8 @@ func Start(ctx context.Context, options Options) (*Worker, error) {
 	worker.pageObjectID = loaded.pageObjectID
 	worker.state = loaded.state
 	worker.pageCatalog = loaded.catalog
+	worker.chats = []*chatTab{{targetID: targetID, sessionID: sessionID, pageObjectID: loaded.pageObjectID}}
+	worker.selected = targetID
 
 	failed = false
 	return worker, nil
@@ -135,6 +155,11 @@ func (worker *Worker) createAndAttachTab(ctx context.Context) (string, string, e
 	}
 
 	worker.mu.Lock()
+	if worker.closed {
+		worker.mu.Unlock()
+		_ = worker.closeTarget(created.TargetID)
+		return "", "", errors.New("外部 CDP runtime 已关闭")
+	}
 	worker.ownedTargets[created.TargetID] = struct{}{}
 	worker.mu.Unlock()
 
@@ -449,7 +474,7 @@ func (worker *Worker) ProtocolHeaders(ctx context.Context) (http.Header, error) 
 // Proof 写入官网 prompt 并通过页面内 WAA service 生成 fresh WAA proof
 func (worker *Worker) Proof(ctx context.Context, digest string, prompt string) (string, error) {
 	lockStarted := time.Now()
-	worker.inputMu.Lock()
+	worker.lockInput()
 	defer worker.inputMu.Unlock()
 	worker.mu.Lock()
 	defer worker.mu.Unlock()
@@ -500,19 +525,32 @@ func (worker *Worker) Reload(ctx context.Context) error {
 	worker.mu.Unlock()
 	options.StartupProgress = nil
 
-	worker.inputMu.Lock()
+	worker.lockInput()
 	defer worker.inputMu.Unlock()
 
 	worker.mu.Lock()
 	targetID := worker.targetID
 	sessionID := worker.sessionID
 	busy := worker.tabs[sessionID] != nil
+	if !busy && len(worker.chats) > 0 {
+		reloading := worker.chats[0]
+		reloading.busy, reloading.resetting = true, true
+		defer func() {
+			worker.mu.Lock()
+			reloading.busy, reloading.resetting = false, false
+			worker.notifyChats()
+			worker.mu.Unlock()
+		}()
+	}
 	worker.mu.Unlock()
 
 	if busy {
 		newTargetID, newSessionID, err := worker.createAndAttachTab(ctx)
 		if err != nil {
 			return err
+		}
+		if err := worker.activateTarget(ctx, newTargetID); err != nil {
+			return errors.Join(err, worker.closeTarget(newTargetID))
 		}
 		targetID = newTargetID
 		sessionID = newSessionID
@@ -537,6 +575,13 @@ func (worker *Worker) switchTab(targetID, sessionID string, loaded loadedPage) e
 	worker.pageObjectID = loaded.pageObjectID
 	worker.state = loaded.state
 	worker.pageCatalog = loaded.catalog
+	primary := &chatTab{targetID: targetID, sessionID: sessionID, pageObjectID: loaded.pageObjectID}
+	if len(worker.chats) > 0 {
+		worker.chats[0] = primary
+	} else {
+		worker.chats = []*chatTab{primary}
+	}
+	worker.selected = targetID
 	if previousSession == sessionID {
 		worker.mu.Unlock()
 		return nil
@@ -553,13 +598,74 @@ func (worker *Worker) switchTab(targetID, sessionID string, loaded loadedPage) e
 }
 
 func (worker *Worker) beginRequest() (string, string) {
-	use := worker.tabs[worker.sessionID]
+	worker.useTab(worker.sessionID, worker.targetID)
+	return worker.sessionID, worker.pageObjectID
+}
+
+func (worker *Worker) useTab(sessionID, targetID string) {
+	use := worker.tabs[sessionID]
 	if use == nil {
-		use = &tabUse{targetID: worker.targetID}
-		worker.tabs[worker.sessionID] = use
+		use = &tabUse{targetID: targetID}
+		worker.tabs[sessionID] = use
 	}
 	use.requests++
-	return worker.sessionID, worker.pageObjectID
+}
+
+// lockInput 为前台操作取得 inputMu
+func (worker *Worker) lockInput() {
+	worker.inputWaiters.Add(1)
+	worker.inputMu.Lock()
+	worker.inputWaiters.Add(-1)
+}
+
+// lockInputWithin 为前台操作取得 inputMu，ctx 结束或等满 limit 时放弃等待并返回错误，此后取得的 inputMu 立即释放
+func (worker *Worker) lockInputWithin(ctx context.Context, limit time.Duration) error {
+	worker.inputWaiters.Add(1)
+	locked := make(chan struct{})
+	go func() {
+		worker.inputMu.Lock()
+		close(locked)
+	}()
+	timeout := time.NewTimer(limit)
+	defer timeout.Stop()
+	var err error
+	select {
+	case <-locked:
+	case <-ctx.Done():
+		err = ctx.Err()
+	case <-timeout.C:
+		err = context.DeadlineExceeded
+	}
+	worker.inputWaiters.Add(-1)
+	if err != nil {
+		go func() {
+			<-locked
+			worker.inputMu.Unlock()
+		}()
+	}
+	return err
+}
+
+// lockInputIdle 在没有前台操作等待时取得 inputMu，后台新开对话让界面运行先接收输入
+func (worker *Worker) lockInputIdle() {
+	for {
+		worker.inputMu.Lock()
+		if worker.inputWaiters.Load() == 0 {
+			return
+		}
+		worker.inputMu.Unlock()
+		runtime.Gosched()
+	}
+}
+
+func (worker *Worker) activateTarget(ctx context.Context, targetID string) error {
+	if err := worker.client.call(ctx, "", "Target.activateTarget", map[string]any{"targetId": targetID}, nil); err != nil {
+		return fmt.Errorf("选中标签页: %w", err)
+	}
+	worker.mu.Lock()
+	worker.selected = targetID
+	worker.mu.Unlock()
+	return nil
 }
 
 func (worker *Worker) finishRequest(sessionID string) {
@@ -604,12 +710,14 @@ func (worker *Worker) Close() error {
 		return nil
 	}
 	worker.closed = true
+	worker.notifyChats()
 	client := worker.client
 	targets := make([]string, 0, len(worker.ownedTargets))
 	for id := range worker.ownedTargets {
 		targets = append(targets, id)
 	}
 	worker.ownedTargets = map[string]struct{}{}
+	worker.chats = nil
 	worker.mu.Unlock()
 
 	if client == nil {

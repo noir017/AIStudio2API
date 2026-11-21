@@ -6,11 +6,13 @@ import (
 	"time"
 
 	"github.com/Mag1cFall/AIStudio2API/internal/camoufoxnative"
+	"github.com/Mag1cFall/AIStudio2API/internal/waa/rhythm"
 )
 
 const (
 	defaultAIStudioOrigin = "https://aistudio.google.com"
 	defaultMakerSuiteHost = "alkalimakersuite-pa.clients6.google.com"
+	generateContentPath   = "/$rpc/google.internal.alkali.applications.makersuite.v1.MakerSuiteService/GenerateContent"
 )
 
 // publicHeaderNames 是页面 MakerSuite 请求共用的公共头，x-goog-ext-519733851-bin 由页面 GetLoggingContext 响应得出
@@ -45,6 +47,8 @@ type Options struct {
 	Origin string
 	// RPCHost 可选，默认 alkalimakersuite-pa.clients6.google.com
 	RPCHost string
+	// Rhythm 可选，点击与输入事件节律；为零值时按账户随机生成
+	Rhythm rhythm.Rhythm
 }
 
 func (options Options) reportStartup(stage camoufoxnative.StartupStage) {

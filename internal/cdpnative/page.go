@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Mag1cFall/AIStudio2API/internal/waa/prooftime"
+	"github.com/Mag1cFall/AIStudio2API/internal/waa/rhythm"
 )
 
 const pageDOMHelpers = `
@@ -189,4 +190,268 @@ func dismissKnownOverlays(ctx context.Context, client *cdpClient, sessionID stri
 		return int(count), nil
 	}
 	return 0, nil
+}
+
+const (
+	// promptBoxSelector 是提示词输入框
+	promptBoxSelector = "ms-prompt-box textarea"
+	// runButtonSelector 是生成前显示 Run、生成中显示 Stop 的按钮
+	runButtonSelector = "ms-run-button button"
+	// newChatButtonSelector 是顶栏的 New chat 按钮
+	newChatButtonSelector = `ms-playground-toolbar button[aria-label="New chat"]`
+	// discardButtonPattern 是 New chat 确认弹窗中丢弃当前对话的按钮文字
+	discardButtonPattern = "^Discard and continue$"
+	// lastTurnSelector 是最后一个对话轮次，指针悬停其上时显示 Rerun 按钮
+	lastTurnSelector = "ms-chat-turn:last-of-type"
+	// rerunButtonSelector 是最后一个对话轮次的 Rerun 按钮
+	rerunButtonSelector = `ms-chat-turn:last-of-type button[aria-label^="Rerun" i]`
+)
+
+// generationRunningExpression 检查官网 Run 按钮已切换为 Stop（按钮内出现 .spin）
+const generationRunningExpression = `(() => {` + pageDOMHelpers + `
+  const button = uniqueVisible('ms-run-button button', '官网 Run 按钮');
+  return Boolean(button && button.querySelector('.spin'));
+})()`
+
+// promptFocusedExpression 检查输入框已获得焦点，官网新开对话后焦点在输入框中
+const promptFocusedExpression = `Boolean(document.activeElement && document.activeElement.matches('` + promptBoxSelector + `'))`
+
+// chatEmptyExpression 检查页面没有对话轮次
+const chatEmptyExpression = `document.querySelectorAll('ms-chat-turn').length === 0`
+
+// temporaryChatExpression 检查页面显示临时对话标识
+const temporaryChatExpression = `[...document.querySelectorAll('ms-incognito-mode-indicator')].some(node => node.checkVisibility({visibilityProperty: true}))`
+
+// promptValueFunction 返回可见提示框的当前值
+const promptValueFunction = `() => {` + pageDOMHelpers + `
+  const textarea = uniqueVisible('ms-prompt-box textarea', '提示词输入框');
+  if (!textarea) throw new Error('提示词输入框不存在');
+  return textarea.value;
+}`
+
+// pointerTargetFunction 把 selector 匹配且文字或 aria-label 匹配 pattern 的第一个可见元素滚动到视口内，返回其中心坐标 JSON，没有时返回空字符串
+const pointerTargetFunction = `(selector, pattern) => {
+  const expression = new RegExp(pattern, 'i');
+  const item = [...document.querySelectorAll(selector)].find(node => node.checkVisibility({visibilityProperty: true}) && expression.test((node.innerText || node.getAttribute('aria-label') || '').trim()));
+  if (!item) return '';
+  item.scrollIntoView({block: 'nearest', inline: 'nearest'});
+  const box = item.getBoundingClientRect();
+  return JSON.stringify({x: Math.round(box.left + box.width / 2), y: Math.round(box.top + box.height / 2)});
+}`
+
+// runStateFunction 在 Runtime.callFunctionOn 中以 page 为 this，等待已排队任务后读取官网 Run 按钮状态
+const runStateFunction = `async function(id) {
+  const page = this;` + pageDOMHelpers + `
+  await new Promise(resolve => setTimeout(resolve));
+  const describe = node => (node?.getAttribute('aria-describedby') || '').split(' ').map(name => document.getElementById(name)?.textContent.trim()).filter(Boolean).join(' ');
+  const texts = selector => [...document.querySelectorAll(selector)].filter(visible).map(node => node.innerText.trim()).filter(Boolean);
+  const button = uniqueVisible('ms-run-button button', '官网 Run 按钮');
+  const box = document.querySelector('ms-prompt-box .prompt-box-container');
+  let cover = '';
+  if (button) {
+    const rect = button.getBoundingClientRect();
+    const top = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    if (top && !button.contains(top)) cover = (top.innerText || top.getAttribute('aria-label') || top.tagName).trim();
+  }
+  return JSON.stringify({
+    found: Boolean(button), enabled: Boolean(button && buttonEnabled(button)) && !cover, running: Boolean(button?.querySelector('.spin')),
+    started: Boolean(page.requests?.get(id)?.started),
+    tooltip: describe(button), boxTooltip: box?.classList.contains('disabled') ? describe(box) : '',
+    dialogs: texts('mat-dialog-container'), notices: texts('mat-snack-bar-container'), cover,
+    prompt: document.querySelector('ms-prompt-box textarea')?.value.length ?? -1
+  });
+}`
+
+type runState struct {
+	Found      bool     `json:"found"`
+	Enabled    bool     `json:"enabled"`
+	Running    bool     `json:"running"`
+	Started    bool     `json:"started"`
+	Tooltip    string   `json:"tooltip"`
+	BoxTooltip string   `json:"boxTooltip"`
+	Dialogs    []string `json:"dialogs"`
+	Notices    []string `json:"notices"`
+	Cover      string   `json:"cover"`
+	Prompt     int      `json:"prompt"`
+}
+
+func readRunState(ctx context.Context, client *cdpClient, sessionID, pageObjectID, id string) (runState, error) {
+	var state runState
+	value, err := client.callFunctionOnString(ctx, sessionID, pageObjectID, runStateFunction, []any{id}, true)
+	if err != nil {
+		return state, fmt.Errorf("读取官网 Run 按钮状态: %w", err)
+	}
+	if err := json.Unmarshal([]byte(value), &state); err != nil {
+		return state, fmt.Errorf("解析官网 Run 按钮状态: %w", err)
+	}
+	return state, nil
+}
+
+func (state runState) reason() string {
+	var parts []string
+	if !state.Found {
+		parts = append(parts, "Run 按钮不存在")
+	}
+	for _, dialog := range state.Dialogs {
+		parts = append(parts, fmt.Sprintf("对话框 %q", dialog))
+	}
+	if state.Cover != "" {
+		parts = append(parts, fmt.Sprintf("遮挡 Run 按钮的元素 %q", state.Cover))
+	}
+	if state.BoxTooltip != "" {
+		parts = append(parts, fmt.Sprintf("输入框提示 %q", state.BoxTooltip))
+	}
+	if state.Tooltip != "" {
+		parts = append(parts, fmt.Sprintf("Run 按钮提示 %q", state.Tooltip))
+	}
+	for _, notice := range state.Notices {
+		parts = append(parts, fmt.Sprintf("提示条 %q", notice))
+	}
+	parts = append(parts, fmt.Sprintf("输入框 %d 字", state.Prompt))
+	return strings.Join(parts, " | ")
+}
+
+// runSettleChecks 是页面空闲时 Run 按钮持续不可点、点击后仍没有开始运行时判定失败所需的连续检查次数
+var runSettleChecks = 40
+
+// pointerMoveDuration 是可信指针从别处移到目标元素所用的毫秒数
+const pointerMoveDuration = 120
+
+// pointer 以 CDP Input.dispatchMouseEvent 移到匹配元素中心，click 为真时按账户节律停顿并按下/抬起左键
+func (worker *Worker) pointer(ctx context.Context, sessionID, selector, pattern string, click bool, move int) (bool, error) {
+	encodedSelector, _ := json.Marshal(selector)
+	encodedPattern, _ := json.Marshal(pattern)
+	expr := fmt.Sprintf("(%s)(%s, %s)", pointerTargetFunction, encodedSelector, encodedPattern)
+	located, err := worker.client.evaluateString(ctx, sessionID, expr)
+	if err != nil || located == "" {
+		return false, err
+	}
+	var target struct {
+		X float64 `json:"x"`
+		Y float64 `json:"y"`
+	}
+	if err := json.Unmarshal([]byte(located), &target); err != nil {
+		return false, err
+	}
+	if err := worker.client.call(ctx, sessionID, "Input.dispatchMouseEvent", map[string]any{
+		"type": "mouseMoved",
+		"x":    target.X,
+		"y":    target.Y,
+	}, nil); err != nil {
+		return true, err
+	}
+	if !click {
+		return true, nil
+	}
+	if delay := rhythm.Duration(worker.rhythm.Press); delay > 0 {
+		if err := waitContext(ctx, delay); err != nil {
+			return true, err
+		}
+	}
+	if err := worker.client.call(ctx, sessionID, "Input.dispatchMouseEvent", map[string]any{
+		"type":       "mousePressed",
+		"x":          target.X,
+		"y":          target.Y,
+		"button":     "left",
+		"buttons":    1,
+		"clickCount": 1,
+	}, nil); err != nil {
+		return true, err
+	}
+	if delay := rhythm.Duration(worker.rhythm.Hold); delay > 0 {
+		if err := waitContext(ctx, delay); err != nil {
+			return true, err
+		}
+	}
+	if err := worker.client.call(ctx, sessionID, "Input.dispatchMouseEvent", map[string]any{
+		"type":       "mouseReleased",
+		"x":          target.X,
+		"y":          target.Y,
+		"button":     "left",
+		"buttons":    0,
+		"clickCount": 1,
+	}, nil); err != nil {
+		return true, err
+	}
+	return true, nil
+}
+
+// selectAll 通过 CDP Input.dispatchKeyEvent 执行可信 Ctrl+A（含 selectAll 编辑命令，跨平台生效）
+func (worker *Worker) selectAll(ctx context.Context, sessionID string) error {
+	if err := worker.client.call(ctx, sessionID, "Input.dispatchKeyEvent", map[string]any{
+		"type":                  "rawKeyDown",
+		"key":                   "Control",
+		"code":                  "ControlLeft",
+		"windowsVirtualKeyCode": 17,
+		"modifiers":             2,
+	}, nil); err != nil {
+		return err
+	}
+	if delay := rhythm.Duration(worker.rhythm.Control); delay > 0 {
+		if err := waitContext(ctx, delay); err != nil {
+			return err
+		}
+	}
+	if err := worker.client.call(ctx, sessionID, "Input.dispatchKeyEvent", map[string]any{
+		"type":                  "rawKeyDown",
+		"key":                   "a",
+		"code":                  "KeyA",
+		"windowsVirtualKeyCode": 65,
+		"modifiers":             2,
+		"commands":              []string{"selectAll"},
+	}, nil); err != nil {
+		return err
+	}
+	if delay := rhythm.Duration(worker.rhythm.Key); delay > 0 {
+		if err := waitContext(ctx, delay); err != nil {
+			return err
+		}
+	}
+	if err := worker.client.call(ctx, sessionID, "Input.dispatchKeyEvent", map[string]any{
+		"type":                  "keyUp",
+		"key":                   "a",
+		"code":                  "KeyA",
+		"windowsVirtualKeyCode": 65,
+		"modifiers":             2,
+	}, nil); err != nil {
+		return err
+	}
+	if delay := rhythm.Duration(worker.rhythm.Release); delay > 0 {
+		if err := waitContext(ctx, delay); err != nil {
+			return err
+		}
+	}
+	return worker.client.call(ctx, sessionID, "Input.dispatchKeyEvent", map[string]any{
+		"type":                  "keyUp",
+		"key":                   "Control",
+		"code":                  "ControlLeft",
+		"windowsVirtualKeyCode": 17,
+		"modifiers":             0,
+	}, nil)
+}
+
+// insertText 通过 CDP Input.insertText 将文本写入当前获得焦点的输入框，并按账户节律抖动
+func (worker *Worker) insertText(ctx context.Context, sessionID, text string) error {
+	if delay := rhythm.Duration(worker.rhythm.Control); delay > 0 {
+		if err := waitContext(ctx, delay); err != nil {
+			return err
+		}
+	}
+	return worker.client.call(ctx, sessionID, "Input.insertText", map[string]any{"text": text}, nil)
+}
+
+// pastePrompt 将按 LF 规范化的提示词经 CDP Input.insertText 写入有焦点的输入框并校验页面值一致
+func (worker *Worker) pastePrompt(ctx context.Context, sessionID, prompt string) error {
+	prompt = normalizePromptNewlines(prompt)
+	if err := worker.insertText(ctx, sessionID, prompt); err != nil {
+		return fmt.Errorf("粘贴提示词: %w", err)
+	}
+	value, err := worker.client.evaluateString(ctx, sessionID, `(`+promptValueFunction+`)()`)
+	if err != nil {
+		return fmt.Errorf("读取提示词: %w", err)
+	}
+	if value != prompt {
+		return fmt.Errorf("粘贴提示词后页面值不同 prompt=%q", prompt)
+	}
+	return nil
 }
