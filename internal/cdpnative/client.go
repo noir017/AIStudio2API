@@ -22,6 +22,9 @@ const (
 	pagePollInterval  = 50 * time.Millisecond
 )
 
+// ErrDisconnected 表示外部 CDP WebSocket 连接已断开
+var ErrDisconnected = errors.New("外部 CDP 连接已断开")
+
 type cdpError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
@@ -166,6 +169,15 @@ func (client *cdpClient) close() error {
 	return client.conn.Close()
 }
 
+func (client *cdpClient) err() error {
+	if client == nil {
+		return nil
+	}
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	return client.failure
+}
+
 func bindingKey(sessionID, name string) string {
 	return sessionID + "\x00" + name
 }
@@ -295,7 +307,7 @@ func (client *cdpClient) fail(err error) {
 	if client.writeErr != nil {
 		err = client.writeErr
 	}
-	failure := fmt.Errorf("外部 CDP 连接已断开: %w", err)
+	failure := fmt.Errorf("%w: %w", ErrDisconnected, err)
 	client.failure = failure
 	pending := client.pending
 	channels := client.channels
@@ -703,6 +715,7 @@ func (client *cdpClient) waitLoad(ctx context.Context, sessionID string, timeout
 	for {
 		client.mu.Lock()
 		load := client.loads[sessionID]
+		failure := client.failure
 		var denial *camoufoxnative.AccessDenial
 		var done bool
 		if load != nil {
@@ -716,11 +729,24 @@ func (client *cdpClient) waitLoad(ctx context.Context, sessionID string, timeout
 		if done {
 			return nil
 		}
+		if failure != nil {
+			return failure
+		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("页面载入 %s 内没有%s", timeout, what)
 		}
-		if err := waitContext(ctx, 100*time.Millisecond); err != nil {
-			return fmt.Errorf("等待页面载入%s: %w", what, err)
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return fmt.Errorf("等待页面载入%s: %w", what, ctx.Err())
+		case <-client.done:
+			timer.Stop()
+			if err := client.err(); err != nil {
+				return err
+			}
+			return ErrDisconnected
+		case <-timer.C:
 		}
 	}
 }

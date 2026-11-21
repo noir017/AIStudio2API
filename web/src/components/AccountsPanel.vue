@@ -167,6 +167,8 @@ const accountEnvironment = reactive({
   proxy: '',
   locale: '',
   timezone: '',
+  cdp_endpoint: '',
+  cdp_headers: undefined as Record<string, string> | undefined,
 })
 const draft = reactive<AccountDraft>({
   label: '',
@@ -174,6 +176,8 @@ const draft = reactive<AccountDraft>({
   proxy: '',
   locale: defaultAccountLocale,
   timezone: '',
+  cdp_endpoint: '',
+  cdp_headers: undefined,
 })
 
 const stateKeys: Record<AccountState, TranslationKey> = {
@@ -463,6 +467,8 @@ function beginEdit(account: Account): void {
   draft.proxy = account.proxy
   draft.locale = account.locale
   draft.timezone = account.timezone
+  draft.cdp_endpoint = account.cdp_endpoint ?? ''
+  draft.cdp_headers = account.cdp_headers ? { ...account.cdp_headers } : undefined
   showEditor.value = true
 }
 
@@ -1040,6 +1046,8 @@ async function updateEnabled(account: Account, enabled: boolean): Promise<void> 
       proxy: account.proxy,
       locale: account.locale,
       timezone: account.timezone,
+      cdp_endpoint: account.cdp_endpoint ?? '',
+      cdp_headers: account.cdp_headers ? { ...account.cdp_headers } : undefined,
     })
   } finally {
     toggling.delete(account.id)

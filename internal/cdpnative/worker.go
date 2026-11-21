@@ -468,7 +468,28 @@ func (worker *Worker) ProtocolHeaders(ctx context.Context) (http.Header, error) 
 	if worker.closed {
 		return nil, errors.New("外部 CDP runtime 已关闭")
 	}
+	if err := worker.client.err(); err != nil {
+		return nil, err
+	}
 	return worker.state.Headers.Clone(), nil
+}
+
+// Done 在外部 CDP WebSocket 连接断开时关闭
+func (worker *Worker) Done() <-chan struct{} {
+	if worker == nil || worker.client == nil {
+		closed := make(chan struct{})
+		close(closed)
+		return closed
+	}
+	return worker.client.done
+}
+
+// Err 返回外部 CDP 连接断开原因，连接正常时返回 nil
+func (worker *Worker) Err() error {
+	if worker == nil || worker.client == nil {
+		return nil
+	}
+	return worker.client.err()
 }
 
 // Proof 写入官网 prompt 并通过页面内 WAA service 生成 fresh WAA proof
@@ -723,11 +744,13 @@ func (worker *Worker) Close() error {
 	if client == nil {
 		return nil
 	}
-	closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	for _, targetID := range targets {
-		_ = client.call(closeCtx, "", "Target.closeTarget", map[string]any{"targetId": targetID}, nil)
+	if client.err() == nil {
+		closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		for _, targetID := range targets {
+			_ = client.call(closeCtx, "", "Target.closeTarget", map[string]any{"targetId": targetID}, nil)
+		}
+		cancel()
 	}
-	cancel()
 	return client.close()
 }
 

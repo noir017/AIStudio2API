@@ -863,3 +863,69 @@ func TestReloadIdleAndBusyTabSwitching(t *testing.T) {
 	}
 	t.Fatalf("旧请求结束后旧标签页 %s 未被关闭", initialTab.TargetID)
 }
+
+func TestDisconnectWakesWaitersAndMarksErr(t *testing.T) {
+	mock := newMockCDPServer(t, "")
+	worker, err := Start(context.Background(), Options{
+		Endpoint: mock.endpoint(),
+		Model:    "gemini-2.5-flash",
+	})
+	if err != nil {
+		t.Fatalf("Start 失败: %v", err)
+	}
+	defer worker.Close()
+
+	// 1) 模拟外部浏览器重启/断开连接时，acquireChat 与 waitLoad 应立即返回 ErrDisconnected，不阻塞到超时
+	worker.mu.Lock()
+	worker.chats[0].busy = true
+	worker.chats[0].resetting = true
+	worker.mu.Unlock()
+
+	acquireErrCh := make(chan error, 1)
+	go func() {
+		_, err := worker.acquireChat(context.Background())
+		acquireErrCh <- err
+	}()
+
+	waitLoadErrCh := make(chan error, 1)
+	worker.client.startLoad("session-wait", "aistudio.google.com", "alkalimakersuite-pa.clients6.google.com")
+	go func() {
+		waitLoadErrCh <- worker.client.waitLoad(context.Background(), "session-wait", 30*time.Second, "测试事件", func(*pageLoad) bool {
+			return false
+		})
+	}()
+
+	// 稍微等待两个 waiter 进入 select，随后强制关闭底层 WebSocket 模拟外部浏览器重启
+	time.Sleep(30 * time.Millisecond)
+	_ = worker.client.close()
+
+	select {
+	case <-worker.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("WebSocket 断开后 Worker.Done() 未关闭")
+	}
+	if !errors.Is(worker.Err(), ErrDisconnected) {
+		t.Fatalf("Worker.Err() = %v, 期望包含 ErrDisconnected", worker.Err())
+	}
+	if _, err := worker.ProtocolHeaders(context.Background()); !errors.Is(err, ErrDisconnected) {
+		t.Fatalf("断开后 ProtocolHeaders() = %v, 期望包含 ErrDisconnected", err)
+	}
+
+	select {
+	case err := <-acquireErrCh:
+		if !errors.Is(err, ErrDisconnected) {
+			t.Fatalf("acquireChat err = %v, 期望包含 ErrDisconnected", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("acquireChat 在 WebSocket 断开后阻塞未返回")
+	}
+
+	select {
+	case err := <-waitLoadErrCh:
+		if !errors.Is(err, ErrDisconnected) {
+			t.Fatalf("waitLoad err = %v, 期望包含 ErrDisconnected", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("waitLoad 在 WebSocket 断开后阻塞未返回")
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -195,11 +196,16 @@ func (admin *runtimeAdmin) accountEnvironment(ctx context.Context, proxy string,
 func (admin *runtimeAdmin) CreateAccount(ctx context.Context, input api.AccountCreateInput, view *camoufoxnative.LiveView) (_ api.AdminAccount, err error) {
 	accountConfig := aistudio.DefaultAccountConfig("")
 	accountConfig.Proxy = strings.TrimSpace(input.Proxy)
+	accountConfig.CDPEndpoint = strings.TrimSpace(input.CDPEndpoint)
+	accountConfig.CDPHeaders = normalizeAccountCDPHeaders(input.CDPHeaders)
 	timezone, err := accountTimezone(input.Timezone)
 	if err != nil {
 		return api.AdminAccount{}, invalidAccount(err)
 	}
 	if err := config.ValidateProxy(accountConfig.Proxy); err != nil {
+		return api.AdminAccount{}, invalidAccount(err)
+	}
+	if err := config.ValidateCDPEndpoint(accountConfig.CDPEndpoint); err != nil {
 		return api.AdminAccount{}, invalidAccount(err)
 	}
 	environment := admin.accountEnvironment(ctx, admin.effectiveProxy(accountConfig.Proxy), input.Locale, timezone)()
@@ -488,6 +494,8 @@ func (admin *runtimeAdmin) ImportChromeAccounts(ctx context.Context, input api.C
 		accountConfig := aistudio.DefaultAccountConfig(email)
 		accountConfig.Proxy = accountProxy
 		accountConfig.Locale, accountConfig.Timezone = locale, timezone
+		accountConfig.CDPEndpoint = strings.TrimSpace(input.CDPEndpoint)
+		accountConfig.CDPHeaders = normalizeAccountCDPHeaders(input.CDPHeaders)
 		if err := accountConfig.Validate(); err != nil {
 			return nil, invalidAccount(err)
 		}
@@ -557,6 +565,8 @@ func (admin *runtimeAdmin) ImportAccountState(ctx context.Context, input api.Acc
 	accountConfig := aistudio.DefaultAccountConfig(label)
 	accountConfig.AuthUser = input.AuthUser
 	accountConfig.Proxy = strings.TrimSpace(input.Proxy)
+	accountConfig.CDPEndpoint = strings.TrimSpace(input.CDPEndpoint)
+	accountConfig.CDPHeaders = normalizeAccountCDPHeaders(input.CDPHeaders)
 	exit := environment()
 	accountConfig.Locale, accountConfig.Timezone = exit.Locale, exit.Timezone
 	if err := accountConfig.Validate(); err != nil {
@@ -799,6 +809,8 @@ func (admin *runtimeAdmin) saveAccountConfig(ctx context.Context, accountID stri
 	accountConfig.Enabled = input.Enabled
 	accountConfig.Proxy = strings.TrimSpace(input.Proxy)
 	accountConfig.Locale = strings.TrimSpace(input.Locale)
+	accountConfig.CDPEndpoint = strings.TrimSpace(input.CDPEndpoint)
+	accountConfig.CDPHeaders = normalizeAccountCDPHeaders(input.CDPHeaders)
 	timezone, err := accountTimezone(input.Timezone)
 	if err != nil {
 		return api.AdminAccount{}, nil, invalidAccount(err)
@@ -812,7 +824,8 @@ func (admin *runtimeAdmin) saveAccountConfig(ctx context.Context, accountID stri
 		return api.AdminAccount{}, nil, err
 	}
 	if current.Enabled != accountConfig.Enabled && current.Proxy == accountConfig.Proxy &&
-		current.Locale == accountConfig.Locale && current.Timezone == accountConfig.Timezone {
+		current.Locale == accountConfig.Locale && current.Timezone == accountConfig.Timezone &&
+		current.CDPEndpoint == accountConfig.CDPEndpoint && maps.Equal(current.CDPHeaders, accountConfig.CDPHeaders) {
 		updated, err := admin.setAccountEnabled(accountID, accountConfig.Enabled)
 		return updated, nil, err
 	}
@@ -1305,6 +1318,7 @@ func adminAccountDTO(status aistudio.AccountStatus) api.AdminAccount {
 	account := api.AdminAccount{
 		ID: status.ID, Label: status.Label, Enabled: status.Enabled, State: string(status.State),
 		Proxy: status.Proxy, Egress: status.Egress, Locale: status.Locale, Timezone: status.Timezone,
+		CDPEndpoint: status.CDPEndpoint, CDPHeaders: maps.Clone(status.CDPHeaders),
 		Models: status.Models, BenefitTier: status.BenefitTier, Message: status.Message,
 		PairingRenewedAt: pairingRenewedAt(status.Directory),
 		Transition:       string(status.Transition), ActiveRequests: status.ActiveRequests, CatalogError: status.CatalogError,
@@ -1326,6 +1340,24 @@ func accountTimezone(value string) (string, error) {
 		return "", fmt.Errorf("账户 timezone 无效: %q", value)
 	}
 	return timezone, nil
+}
+
+func normalizeAccountCDPHeaders(headers map[string]string) map[string]string {
+	if len(headers) == 0 {
+		return nil
+	}
+	cleaned := make(map[string]string, len(headers))
+	for key, value := range headers {
+		trimmedKey := strings.TrimSpace(key)
+		if trimmedKey == "" {
+			continue
+		}
+		cleaned[trimmedKey] = strings.TrimSpace(value)
+	}
+	if len(cleaned) == 0 {
+		return nil
+	}
+	return cleaned
 }
 
 func invalidAccount(err error) error {

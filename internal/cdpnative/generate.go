@@ -624,6 +624,9 @@ func (worker *Worker) acquireChat(ctx context.Context) (*chatTab, error) {
 		if worker.closed {
 			return nil, errors.New("外部 CDP runtime 已关闭")
 		}
+		if err := worker.client.err(); err != nil {
+			return nil, err
+		}
 		resetting := false
 		for _, tab := range worker.chats {
 			if !tab.busy {
@@ -643,9 +646,16 @@ func (worker *Worker) acquireChat(ctx context.Context) (*chatTab, error) {
 			worker.chatsChanged = make(chan struct{})
 		}
 		changed := worker.chatsChanged
+		done := worker.client.done
 		worker.mu.Unlock()
 		select {
 		case <-changed:
+		case <-done:
+			worker.mu.Lock()
+			if err := worker.client.err(); err != nil {
+				return nil, err
+			}
+			return nil, ErrDisconnected
 		case <-ctx.Done():
 			worker.mu.Lock()
 			return nil, ctx.Err()

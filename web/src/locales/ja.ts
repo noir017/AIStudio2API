@@ -121,6 +121,7 @@ export const messages: Record<TranslationKey, string> = {
   'common.empty': 'データがありません',
   'common.copy': 'コピー',
   'common.copied': 'コピーしました',
+  'common.clear': 'クリア',
   'common.error': 'リクエストに失敗しました',
   'accounts.empty': 'アカウントがありません',
   'accounts.emptyHint': '「アカウントを追加」からログインまたはインポート',
@@ -140,6 +141,13 @@ export const messages: Record<TranslationKey, string> = {
   'accounts.proxy': 'アカウントのプロキシ',
   'accounts.locale': '言語と地域',
   'accounts.timezone': 'タイムゾーン',
+  'accounts.cdpEndpoint': '外部 CDP エンドポイント（任意）',
+  'accounts.cdpEndpointPlaceholder':
+    '空欄時はグローバル設定を使用（例: http://127.0.0.1:9222/cdp/profile-a）',
+  'accounts.cdpHeaders': '外部 CDP ヘッダー（任意）',
+  'accounts.cdpHeadersPlaceholder':
+    '1 行ごとに Key: Value または JSON オブジェクト（例: Authorization: Bearer example-token）',
+  'accounts.cdpFallbackHint': '空欄時はグローバル設定を使用します。クリアすると上書きを解除します',
   'accounts.models': 'モデル',
   'accounts.tierUnknown': '不明',
   'accounts.direct': '直接接続',
@@ -491,8 +499,18 @@ export const messages: Record<TranslationKey, string> = {
   'settings.waaBackend': 'WAA バックエンド',
   'settings.waaBackendCamoufox': 'Camoufox',
   'settings.waaBackendSpiderMonkey': 'SpiderMonkey',
+  'settings.waaBackendCDP': '外部 CDP ブラウザ',
   'settings.waaBackendHelp':
-    'WAA は AI Studio が生成のたびに実行する検証プログラムです。SpiderMonkey はサービス プロセス内で実行するため Camoufox 不要で、メモリはアカウントあたり約 150 MB です。Camoufox はアカウントごとにバックグラウンドで AI Studio のページを開いて実行し、アカウントあたり約 0.5 GB を使い、初回使用時にダウンロードされます。アカウントのログインにはどちらもブラウザが必要',
+    'WAA は AI Studio が生成のたびに実行する検証プログラムです。SpiderMonkey はサービス プロセス内で実行するため Camoufox 不要で、メモリはアカウントあたり約 150 MB です。Camoufox はアカウントごとにバックグラウンドで AI Studio のページを開いて実行し、アカウントあたり約 0.5 GB を使い、初回使用時にダウンロードされます。外部 CDP ブラウザは起動済みの Chromium 系ブラウザへ Chrome DevTools Protocol で接続し、Camoufox のダウンロードやブラウザプロセスの起動・停止を行いません。アカウントのログインにはブラウザが必要',
+  'settings.cdpEndpoint': '外部 CDP エンドポイント',
+  'settings.cdpEndpointHelp':
+    'グローバル既定の外部 CDP デバッグ URL（http/https/ws/wss）。パス付きリバースプロキシ経由でも WebSocket URL を自動書き換えします。アカウントごとに個別上書き可能',
+  'settings.cdpHeaders': '外部 CDP カスタムヘッダー',
+  'settings.cdpHeadersHelp':
+    'CDP 検出と WebSocket ハンドシェイクに付与するグローバル HTTP ヘッダー（JSON オブジェクトまたは改行区切りの Key: Value）。アカウント側の同名キーが優先されます',
+  'settings.cdpHeadersPlaceholder': 'Authorization: Bearer example-token\nX-Profile: profile-a',
+  'settings.cdpHeadersShow': '外部 CDP ヘッダーを表示',
+  'settings.cdpHeadersHide': '外部 CDP ヘッダーを非表示',
   'settings.helpFor': '{label}の説明',
   'settings.section.runtime': '実行とチャネル',
   'settings.section.models': 'モデルとプロトコル',

@@ -38,6 +38,7 @@ const emit = defineEmits<{
 const { t, locale, errorText } = useI18n()
 const saving = ref(false)
 const revealKey = ref(false)
+const revealCDPHeaders = ref(false)
 const adminPassword = ref('')
 // form 是编辑中的配置，读到 props.config 后由 resetForm 填入，表单只在读到配置后显示
 const form = reactive({} as ServiceConfig)
@@ -87,6 +88,8 @@ const sections: {
     icon: 'channel',
     fields: [
       'waa_backend',
+      'cdp_endpoint',
+      'cdp_headers',
       'upstream_channels',
       'build_native_nonstream',
       'init_timeout',
@@ -143,6 +146,7 @@ const upstreamChannelOptions: UpstreamChannel[] = ['playground', 'build']
 const waaBackendOptions: { value: ServiceConfig['waa_backend']; label: TranslationKey }[] = [
   { value: 'camoufox', label: 'settings.waaBackendCamoufox' },
   { value: 'spidermonkey', label: 'settings.waaBackendSpiderMonkey' },
+  { value: 'cdp', label: 'settings.waaBackendCDP' },
 ]
 const inputClass =
   'w-full rounded-md border border-line bg-canvas px-3 py-2 text-sm text-white transition focus:border-blue-500 focus:outline-none'
@@ -182,7 +186,7 @@ const previewFallback = computed(
 // capacityLimit 是 Worker 滑块的上限：所选 WAA 后端默认峰值的两倍（SpiderMonkey 20、Camoufox 10），账户数或输入的峰值更大时取其值
 const capacityLimit = computed(() =>
   Math.max(
-    form.waa_backend === 'camoufox' ? 20 : 40,
+    form.waa_backend === 'spidermonkey' ? 40 : 20,
     props.accounts.length,
     form.max_active_workers,
   ),
@@ -351,6 +355,7 @@ watch(apiKeyList, () => {
 function resetForm(config: ServiceConfig): void {
   Object.assign(form, JSON.parse(JSON.stringify(config)) as ServiceConfig)
   adminPassword.value = ''
+  revealCDPHeaders.value = false
 }
 
 watch(
@@ -798,6 +803,76 @@ async function saveConfig(): Promise<void> {
                   {{ t(option.label) }}
                 </option>
               </UiSelect>
+            </SettingRow>
+            <SettingRow
+              v-if="form.waa_backend === 'cdp' || Boolean(form.cdp_endpoint)"
+              :label="t('settings.cdpEndpoint')"
+              control-id="setting-cdp-endpoint"
+              :description="t('settings.cdpEndpointHelp')"
+              effect="service"
+              :changed="changedFields.has('cdp_endpoint')"
+              :env="environmentKey('cdp_endpoint')"
+            >
+              <input
+                id="setting-cdp-endpoint"
+                v-model.trim="form.cdp_endpoint"
+                :class="inputClass"
+                type="text"
+                placeholder="http://127.0.0.1:9222/cdp/profile-a"
+              />
+            </SettingRow>
+            <SettingRow
+              v-if="form.waa_backend === 'cdp' || Boolean(form.cdp_headers)"
+              :label="t('settings.cdpHeaders')"
+              control-id="setting-cdp-headers"
+              :description="t('settings.cdpHeadersHelp')"
+              effect="service"
+              :changed="changedFields.has('cdp_headers')"
+              :env="environmentKey('cdp_headers')"
+            >
+              <div v-if="form.cdp_headers && !revealCDPHeaders" class="flex items-center gap-2">
+                <input
+                  id="setting-cdp-headers"
+                  :class="[inputClass, 'font-mono text-gray-400']"
+                  type="password"
+                  value="••••••••••••"
+                  readonly
+                />
+                <button
+                  type="button"
+                  class="shrink-0 rounded-md border border-line px-2.5 py-2 text-xs text-gray-300 transition hover:bg-line hover:text-white"
+                  :aria-label="t('settings.cdpHeadersShow')"
+                  @click="revealCDPHeaders = true"
+                >
+                  <UiIcon name="eye" :size="14" />
+                </button>
+                <button
+                  type="button"
+                  class="shrink-0 rounded-md border border-line px-2.5 py-2 text-xs text-gray-400 transition hover:bg-line hover:text-white"
+                  @click="form.cdp_headers = ''"
+                >
+                  {{ t('common.clear') }}
+                </button>
+              </div>
+              <div v-else class="space-y-1.5">
+                <textarea
+                  id="setting-cdp-headers"
+                  v-model="form.cdp_headers"
+                  :class="[inputClass, 'min-h-20 resize-y font-mono text-xs']"
+                  rows="3"
+                  :placeholder="t('settings.cdpHeadersPlaceholder')"
+                />
+                <div v-if="form.cdp_headers" class="flex justify-end">
+                  <button
+                    type="button"
+                    class="inline-flex items-center gap-1 text-xs text-gray-400 transition hover:text-white"
+                    @click="revealCDPHeaders = false"
+                  >
+                    <UiIcon name="eyeOff" :size="13" />
+                    {{ t('settings.cdpHeadersHide') }}
+                  </button>
+                </div>
+              </div>
             </SettingRow>
             <SettingRow
               v-for="channel in upstreamChannelOptions"

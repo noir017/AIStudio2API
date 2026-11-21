@@ -122,6 +122,7 @@ export const messages: Record<TranslationKey, string> = {
   'common.empty': 'Aucune donnée',
   'common.copy': 'Copier',
   'common.copied': 'Copié',
+  'common.clear': 'Effacer',
   'common.error': 'La requête a échoué',
   'accounts.empty': 'Aucun compte',
   'accounts.emptyHint': 'Cliquez sur « Ajouter un compte » pour vous connecter ou importer',
@@ -141,6 +142,14 @@ export const messages: Record<TranslationKey, string> = {
   'accounts.proxy': 'Proxy du compte',
   'accounts.locale': 'Langue et région',
   'accounts.timezone': 'Fuseau horaire',
+  'accounts.cdpEndpoint': 'Point de terminaison CDP externe (optionnel)',
+  'accounts.cdpEndpointPlaceholder':
+    'Vide pour la valeur globale, ex. http://127.0.0.1:9222/cdp/profile-a',
+  'accounts.cdpHeaders': 'En-têtes CDP externes (optionnel)',
+  'accounts.cdpHeadersPlaceholder':
+    'Un Key: Value par ligne ou objet JSON, ex. Authorization: Bearer example-token',
+  'accounts.cdpFallbackHint':
+    'Laisser vide pour utiliser les valeurs globales ; effacer pour supprimer la surcharge',
   'accounts.models': 'Modèles',
   'accounts.tierUnknown': 'Inconnu',
   'accounts.direct': 'Connexion directe',
@@ -493,8 +502,18 @@ export const messages: Record<TranslationKey, string> = {
   'settings.waaBackend': 'Moteur WAA',
   'settings.waaBackendCamoufox': 'Camoufox',
   'settings.waaBackendSpiderMonkey': 'SpiderMonkey',
+  'settings.waaBackendCDP': 'Navigateur CDP externe',
   'settings.waaBackendHelp':
-    'WAA est le programme de vérification qu’AI Studio exécute avant chaque génération. SpiderMonkey l’exécute dans le processus du service, sans Camoufox, avec environ 150 Mo de mémoire par compte ; Camoufox l’exécute dans une page AI Studio ouverte en arrière-plan pour chaque compte, utilise environ 0,5 Go par compte et se télécharge à la première utilisation. La connexion des comptes passe toujours par un navigateur',
+    'WAA est le programme de vérification qu’AI Studio exécute avant chaque génération. SpiderMonkey l’exécute dans le processus du service, sans Camoufox, avec environ 150 Mo de mémoire par compte ; Camoufox l’exécute dans une page AI Studio ouverte en arrière-plan pour chaque compte, utilise environ 0,5 Go par compte et se télécharge à la première utilisation ; le navigateur CDP externe se connecte via Chrome DevTools Protocol à un navigateur Chromium déjà lancé sans télécharger Camoufox ni démarrer/arrêter le navigateur. La connexion des comptes passe toujours par un navigateur',
+  'settings.cdpEndpoint': 'Point de terminaison CDP externe',
+  'settings.cdpEndpointHelp':
+    'Adresse globale de débogage CDP externe (http/https/ws/wss). Derrière un proxy inverse avec préfixe de chemin, l’URL WebSocket est réécrite automatiquement ; surchargeable par compte',
+  'settings.cdpHeaders': 'En-têtes HTTP CDP externes',
+  'settings.cdpHeadersHelp':
+    'En-têtes globaux envoyés lors de la découverte CDP et du handshake WebSocket (objet JSON ou paires Key: Value par ligne). Les clés définies par compte priment sur les valeurs globales',
+  'settings.cdpHeadersPlaceholder': 'Authorization: Bearer example-token\nX-Profile: profile-a',
+  'settings.cdpHeadersShow': 'Afficher les en-têtes CDP externes',
+  'settings.cdpHeadersHide': 'Masquer les en-têtes CDP externes',
   'settings.helpFor': 'À propos de {label}',
   'settings.section.runtime': 'Exécution et canaux',
   'settings.section.models': 'Modèles et protocoles',

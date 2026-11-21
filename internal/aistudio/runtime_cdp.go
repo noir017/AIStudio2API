@@ -77,5 +77,11 @@ func NewCDPWorker(ctx context.Context, accountID string, options cdpnative.Optio
 		},
 	}
 	pageWorkers.Store(accountID, worker)
+	go func() {
+		<-runtime.Done()
+		if runtime.Err() != nil {
+			worker.setPhase(WorkerFailed)
+		}
+	}()
 	return worker, nil
 }
