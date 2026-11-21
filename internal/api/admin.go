@@ -358,6 +358,8 @@ type RuntimeConfig struct {
 	ModelAccounts             string               `json:"model_accounts"`
 	APIKeyAccounts            string               `json:"api_key_accounts"`
 	WAABackend                string               `json:"waa_backend"`
+	CDPEndpoint               string               `json:"cdp_endpoint"`
+	CDPHeaders                string               `json:"cdp_headers"`
 	MediaOutput               string               `json:"media_output"`
 	MediaBaseURL              string               `json:"media_base_url"`
 	Environment               []string             `json:"environment"`

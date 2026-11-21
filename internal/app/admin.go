@@ -1405,6 +1405,8 @@ func (admin *runtimeAdmin) UpdateRuntimeConfig(_ context.Context, value api.Runt
 		ModelAccounts:          strings.TrimSpace(value.ModelAccounts),
 		APIKeyAccounts:         strings.TrimSpace(value.APIKeyAccounts),
 		WAABackend:             value.WAABackend,
+		CDPEndpoint:            strings.TrimSpace(value.CDPEndpoint),
+		CDPHeaders:             strings.TrimSpace(value.CDPHeaders),
 		MediaOutput:            strings.ToLower(strings.TrimSpace(value.MediaOutput)),
 		MediaBaseURL:           strings.TrimSpace(value.MediaBaseURL),
 	}.KeepEnvironment(saved)
@@ -1760,6 +1762,8 @@ func runtimeConfigDTO(cfg config.Config) api.RuntimeConfig {
 		ModelAccounts:          cfg.ModelAccounts,
 		APIKeyAccounts:         cfg.APIKeyAccounts,
 		WAABackend:             cfg.WAABackend,
+		CDPEndpoint:            cfg.CDPEndpoint,
+		CDPHeaders:             cfg.CDPHeaders,
 		MediaOutput:            cfg.MediaOutput,
 		MediaBaseURL:           cfg.MediaBaseURL,
 		Environment:            append([]string{}, cfg.Environment...),
