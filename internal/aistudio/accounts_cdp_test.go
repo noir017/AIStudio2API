@@ -12,7 +12,7 @@ func TestAccountCDPOverridesAndValidation(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, accountConfigName)
 	raw := `{
-		"label": "acct-a",
+		"label": "acct-a@example.com",
 		"enabled": true,
 		"proxy": "",
 		"locale": "en-US",
@@ -31,13 +31,13 @@ func TestAccountCDPOverridesAndValidation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("readAccountConfig 失败: %v", err)
 	}
-	account := &Account{ID: "acct-a", Config: cfg}
+	account := &Account{ID: "acct-a@example.com", Config: cfg}
 
 	if got := account.EffectiveCDPEndpoint("http://127.0.0.1:9222/cdp/global"); got != "http://127.0.0.1:9222/cdp/profile-a" {
 		t.Fatalf("EffectiveCDPEndpoint = %q", got)
 	}
 
-	fallbackAccount := &Account{ID: "acct-b", Config: AccountConfig{Label: "acct-b", Locale: "en-US", Timezone: "UTC"}}
+	fallbackAccount := &Account{ID: "acct-b@example.com", Config: AccountConfig{Label: "acct-b@example.com", Locale: "en-US", Timezone: "UTC"}}
 	if got := fallbackAccount.EffectiveCDPEndpoint("http://127.0.0.1:9222/cdp/global"); got != "http://127.0.0.1:9222/cdp/global" {
 		t.Fatalf("回退全局 EffectiveCDPEndpoint = %q", got)
 	}
