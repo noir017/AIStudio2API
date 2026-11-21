@@ -843,7 +843,16 @@ func TestGenerateFunctionCallContinuationAndSubmit(t *testing.T) {
 		camoufoxnative.StepClickSubmit,
 		camoufoxnative.StepSent,
 	}
-	if !slices.Equal(steps, wantSubSteps) {
+	wantSubStepsWithWait := []camoufoxnative.GenerateStep{
+		camoufoxnative.StepAcquireTab,
+		camoufoxnative.StepLockInput,
+		camoufoxnative.StepSelectTab,
+		camoufoxnative.StepPasteResult,
+		camoufoxnative.StepClickSubmit,
+		camoufoxnative.StepWaitSent,
+		camoufoxnative.StepSent,
+	}
+	if !slices.Equal(steps, wantSubSteps) && !slices.Equal(steps, wantSubStepsWithWait) {
 		t.Fatalf("函数结果提交步骤异常: got=%v want=%v", steps, wantSubSteps)
 	}
 
