@@ -827,6 +827,8 @@ func sameDataConfig(value api.RuntimeConfig, active config.Config, overrides dat
 		InitTimeout: initTimeout, RequestTimeout: requestTimeout, StripThoughtSignatures: value.StripThoughtSignatures,
 		UpstreamChannels:      value.UpstreamChannels,
 		WAABackend:            value.WAABackend,
+		CDPEndpoint:           value.CDPEndpoint,
+		CDPHeaders:            value.CDPHeaders,
 		BuildNativeNonstream:  value.BuildNativeNonstream,
 		YouTubeLinks:          value.YouTubeLinks,
 		DiscoverHiddenModels:  value.DiscoverHiddenModels,
@@ -840,6 +842,8 @@ func sameDataConfig(value api.RuntimeConfig, active config.Config, overrides dat
 		saved.InitTimeout == active.InitTimeout && saved.RequestTimeout == active.RequestTimeout &&
 		slices.Equal(saved.UpstreamChannels, active.UpstreamChannels) &&
 		saved.WAABackend == active.WAABackend &&
+		saved.CDPEndpoint == active.CDPEndpoint &&
+		saved.CDPHeaders == active.CDPHeaders &&
 		saved.BuildNativeNonstream == active.BuildNativeNonstream &&
 		saved.YouTubeLinks == active.YouTubeLinks && saved.StripThoughtSignatures == active.StripThoughtSignatures && saved.FirstEventHedge == active.FirstEventHedge && saved.FirstEventHedgeModels == active.FirstEventHedgeModels &&
 		saved.DiscoverHiddenModels == active.DiscoverHiddenModels &&

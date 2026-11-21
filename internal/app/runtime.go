@@ -76,8 +76,9 @@ func newRuntime(
 	if _, err := proxies.Assign(); err != nil {
 		return nil, nil, nil, err
 	}
+	globalCDPHeaders, _ := config.ParseCDPHeaders(cfg.CDPHeaders)
 	workers := newAccountWorkerManager(
-		pool, accounts, requests, camoufoxPath, globalProxy, cfg.InitTimeout,
+		pool, accounts, requests, cfg.WAABackend, camoufoxPath, cfg.CDPEndpoint, globalCDPHeaders, globalProxy, cfg.InitTimeout,
 		cfg.WarmWorkerLimit, cfg.MaxActiveWorkers, cfg.WarmStartupConcurrency,
 	)
 	transport, err := aistudio.NewMakerSuiteHTTPTransport(aistudio.HTTPTransportOptions{
