@@ -481,7 +481,7 @@ onMounted(revealCurrentTab)
         }}
       </div>
       <CamoufoxBanner
-        v-if="status && !camoufoxInTask"
+        v-if="status && !camoufoxInTask && config?.waa_backend !== 'cdp'"
         :camoufox="status.camoufox"
         @retry="retryCamoufox"
       />

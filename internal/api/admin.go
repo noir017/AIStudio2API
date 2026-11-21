@@ -196,6 +196,8 @@ type AdminAccount struct {
 	Egress      string   `json:"egress"`
 	Locale      string   `json:"locale"`
 	Timezone    string   `json:"timezone"`
+	CDPEndpoint string            `json:"cdp_endpoint,omitempty"`
+	CDPHeaders  map[string]string `json:"cdp_headers,omitempty"`
 	Models      []string `json:"models"`
 	BenefitTier string   `json:"benefit_tier"`
 	Message     string   `json:"message"`
@@ -255,6 +257,8 @@ type AccountInput struct {
 	Proxy    string `json:"proxy"`
 	Locale   string `json:"locale"`
 	Timezone string `json:"timezone"`
+	CDPEndpoint string            `json:"cdp_endpoint,omitempty"`
+	CDPHeaders  map[string]string `json:"cdp_headers,omitempty"`
 }
 
 // AccountCreateInput 表示浏览器登录的账户环境
@@ -262,6 +266,8 @@ type AccountCreateInput struct {
 	Proxy    string `json:"proxy"`
 	Locale   string `json:"locale"`
 	Timezone string `json:"timezone"`
+	CDPEndpoint string            `json:"cdp_endpoint,omitempty"`
+	CDPHeaders  map[string]string `json:"cdp_headers,omitempty"`
 }
 
 // CookieImportInput 表示识别 Cookie 中账户时提交的 Cookie 文本与出口代理
@@ -304,6 +310,8 @@ type ChromeImportInput struct {
 	Proxy      string   `json:"proxy"`
 	Locale     string   `json:"locale"`
 	Timezone   string   `json:"timezone"`
+	CDPEndpoint string            `json:"cdp_endpoint,omitempty"`
+	CDPHeaders  map[string]string `json:"cdp_headers,omitempty"`
 }
 
 // RuntimeConfig 表示全局运行配置

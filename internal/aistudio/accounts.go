@@ -369,6 +369,8 @@ type AccountStatus struct {
 	Egress      string                   `json:"egress"`
 	Locale      string                   `json:"locale"`
 	Timezone    string                   `json:"timezone"`
+	CDPEndpoint string                   `json:"cdp_endpoint,omitempty"`
+	CDPHeaders  map[string]string        `json:"cdp_headers,omitempty"`
 	Models      []string                 `json:"models"`
 	BenefitTier string                   `json:"benefit_tier"`
 	Cooldowns   map[string]CooldownState `json:"-"`
@@ -2987,6 +2989,8 @@ func (p *AccountPool) Status() []AccountStatus {
 			Egress:      account.EffectiveProxy(""),
 			Locale:      account.Config.Locale,
 			Timezone:    account.Config.Timezone,
+			CDPEndpoint: account.Config.CDPEndpoint,
+			CDPHeaders:  maps.Clone(account.Config.CDPHeaders),
 			Models:      models,
 			BenefitTier: tier,
 			Cooldowns:   cloneCooldowns(account.runtime.Cooldowns),

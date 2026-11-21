@@ -118,6 +118,7 @@ export const messages: Record<TranslationKey, string> = {
   'common.empty': 'No data',
   'common.copy': 'Copy',
   'common.copied': 'Copied',
+  'common.clear': 'Clear',
   'common.error': 'Request failed',
   'accounts.empty': 'No accounts',
   'accounts.emptyHint': 'Click "Add account" to sign in or import',
@@ -137,6 +138,13 @@ export const messages: Record<TranslationKey, string> = {
   'accounts.proxy': 'Account proxy',
   'accounts.locale': 'Locale',
   'accounts.timezone': 'Timezone',
+  'accounts.cdpEndpoint': 'External CDP endpoint (optional)',
+  'accounts.cdpEndpointPlaceholder':
+    'Leave blank for global default, e.g. http://127.0.0.1:9222/cdp/profile-a',
+  'accounts.cdpHeaders': 'External CDP headers (optional)',
+  'accounts.cdpHeadersPlaceholder':
+    'One Key: Value per line or JSON object, e.g. Authorization: Bearer example-token',
+  'accounts.cdpFallbackHint': 'Leave blank to use global defaults; clear to remove overrides',
   'accounts.models': 'Models',
   'accounts.tierUnknown': 'Unknown',
   'accounts.direct': 'Direct',
@@ -488,8 +496,18 @@ export const messages: Record<TranslationKey, string> = {
   'settings.waaBackend': 'WAA backend',
   'settings.waaBackendCamoufox': 'Camoufox',
   'settings.waaBackendSpiderMonkey': 'SpiderMonkey',
+  'settings.waaBackendCDP': 'External CDP Browser',
   'settings.waaBackendHelp':
-    'WAA is the verification program AI Studio runs before each generation. SpiderMonkey runs it inside the service without Camoufox, using about 150 MB of memory per account; Camoufox runs it in an AI Studio page opened in the background for each account, using about 0.5 GB per account, and is downloaded on first use. Account sign-in uses a browser either way',
+    'WAA is the verification program AI Studio runs before each generation. SpiderMonkey runs it inside the service without Camoufox, using about 150 MB of memory per account; Camoufox runs it in an AI Studio page opened in the background for each account, using about 0.5 GB per account, and is downloaded on first use; External CDP Browser connects to an already-running Chromium-based browser via Chrome DevTools Protocol without downloading Camoufox or starting/stopping the browser process. Account sign-in still uses a browser',
+  'settings.cdpEndpoint': 'External CDP endpoint',
+  'settings.cdpEndpointHelp':
+    'Global default external CDP debugging URL (http/https/ws/wss). Behind a path-prefixed reverse proxy, WebSocket debugger URLs are rewritten automatically; accounts can override this individually',
+  'settings.cdpHeaders': 'External CDP headers',
+  'settings.cdpHeadersHelp':
+    'Global custom HTTP headers sent for CDP discovery and WebSocket handshakes, as a JSON object or line-separated Key: Value pairs. Matching account-level keys override global values',
+  'settings.cdpHeadersPlaceholder': 'Authorization: Bearer example-token\nX-Profile: profile-a',
+  'settings.cdpHeadersShow': 'Show external CDP headers',
+  'settings.cdpHeadersHide': 'Hide external CDP headers',
   'settings.helpFor': 'About {label}',
   'settings.section.runtime': 'Runtime & channels',
   'settings.section.models': 'Models & protocols',
