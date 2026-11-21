@@ -12,12 +12,14 @@ import (
 	"github.com/Mag1cFall/AIStudio2API/internal/cdpnative"
 )
 
-// cdpRuntime 是外部 CDP 浏览器后端的 workerRuntime，实现基础 workerRuntime 全部 9 个方法
+// cdpRuntime 是外部 CDP 浏览器后端的 workerRuntime，实现基础 workerRuntime、pageGenerator 与 functionContinuer
 type cdpRuntime struct {
 	*cdpnative.Worker
 }
 
 var _ workerRuntime = cdpRuntime{}
+var _ pageGenerator = cdpRuntime{}
+var _ functionContinuer = cdpRuntime{}
 
 // Reload 重新载入外部浏览器中的 AI Studio 页面，返回同一 runtime
 func (runtime cdpRuntime) Reload(ctx context.Context) (workerRuntime, error) {

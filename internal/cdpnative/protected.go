@@ -20,6 +20,9 @@ import (
 const protectedGrantBatch = 4
 
 type protectedMessage struct {
+	Sent  bool   `json:"sent"`
+	Proof string `json:"proof"`
+	pageProofTiming
 	Status  int         `json:"status"`
 	Headers [][2]string `json:"headers"`
 	Done    bool        `json:"done"`
@@ -152,7 +155,7 @@ func (worker *Worker) SendProtected(ctx context.Context, rawURL string, headers 
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	worker.inputMu.Lock()
+	worker.lockInput()
 	worker.mu.Lock()
 	if worker.closed {
 		worker.mu.Unlock()
@@ -297,6 +300,10 @@ type protectedResponseBody struct {
 	requestID    string
 	bindingName  string
 	channel      *cdpChannel
+	// stop 在正文读完前关闭时中止请求，为空时在页面中止 XHR
+	stop func() error
+	// release 在关闭时结束请求所在的标签页使用，参数表示正文完整无错读完与正文中出现了函数调用；为空时按受保护请求结束
+	release func(done, call bool)
 
 	call     bool
 	tail     []byte
@@ -304,6 +311,7 @@ type protectedResponseBody struct {
 	buffer   []byte
 	consumed int
 	done     bool
+	failed   bool
 	closed   bool
 }
 
@@ -320,6 +328,7 @@ func (body *protectedResponseBody) Read(target []byte) (int, error) {
 		}
 		if err != nil {
 			body.done = true
+			body.failed = true
 			return 0, errors.Join(err, body.worker.cancelProtectedRequest(body.sessionID, body.pageObjectID, body.requestID, body.bindingName))
 		}
 		if !strings.HasPrefix(value, "{") {
@@ -352,6 +361,7 @@ func (body *protectedResponseBody) Read(target []byte) (int, error) {
 			body.worker.client.closeBinding(body.sessionID, body.bindingName)
 		}
 		if message.Error != "" {
+			body.failed = true
 			return 0, errors.New(message.Error)
 		}
 	}
@@ -371,11 +381,19 @@ func (body *protectedResponseBody) Close() error {
 		return nil
 	}
 	body.closed = true
-	done := body.done
+	done, failed, call := body.done, body.failed, body.call
 	body.mu.Unlock()
-	defer body.worker.finishRequest(body.sessionID)
+	if body.release != nil {
+		defer body.release(done && !failed, call)
+	} else {
+		defer body.worker.finishRequest(body.sessionID)
+	}
 	if done {
 		return nil
+	}
+	if body.stop != nil {
+		body.worker.client.closeBinding(body.sessionID, body.bindingName)
+		return body.stop()
 	}
 	return body.worker.cancelProtectedRequest(body.sessionID, body.pageObjectID, body.requestID, body.bindingName)
 }
