@@ -230,11 +230,6 @@ func (worker *Worker) openPage(ctx context.Context, options Options, sessionID s
 
 	bindingName := "__cdp_waa_ready_" + rand.Text()
 	symbolKey := "__cdp_waa_service_" + rand.Text()
-	services, err := client.openBinding(ctx, sessionID, bindingName)
-	if err != nil {
-		return loadedPage{}, err
-	}
-	defer client.closeBinding(sessionID, bindingName)
 
 	client.startLoad(sessionID, originParsed.Hostname(), options.rpcHost())
 	defer client.endLoad(sessionID)
@@ -248,6 +243,12 @@ func (worker *Worker) openPage(ctx context.Context, options Options, sessionID s
 	if err := client.call(ctx, sessionID, "Network.enable", nil, nil); err != nil {
 		return loadedPage{}, fmt.Errorf("启用 CDP Network 域: %w", err)
 	}
+
+	services, err := client.openBinding(ctx, sessionID, bindingName)
+	if err != nil {
+		return loadedPage{}, err
+	}
+	defer client.closeBinding(sessionID, bindingName)
 
 	var preload struct {
 		Identifier string `json:"identifier"`
@@ -326,10 +327,7 @@ func (worker *Worker) openPage(ctx context.Context, options Options, sessionID s
 	}
 
 	options.reportStartup(camoufoxnative.StartupLocatingWAA)
-	serviceCtx, cancelService := context.WithTimeout(ctx, 30*time.Second)
-	_, err = services.next(serviceCtx)
-	cancelService()
-	if err != nil {
+	if err := waitServiceReady(ctx, client, sessionID, services, symbolKey, 30*time.Second); err != nil {
 		return loadedPage{}, fmt.Errorf("等待官网 WAA service: %w", err)
 	}
 
@@ -802,4 +800,30 @@ func loadStorageState(path string) (storageState, error) {
 		return storageState{}, fmt.Errorf("解析 storage state: %w", err)
 	}
 	return state, nil
+}
+
+// waitServiceReady 等待官网 WAA service 就绪：优先接收 CDP binding 通知，同时轮询一次性 Symbol 兜底（防止跨进程导航丢失 binding）
+func waitServiceReady(ctx context.Context, client *cdpClient, sessionID string, services *cdpChannel, symbolKey string, timeout time.Duration) error {
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	readyExpr := buildServiceReadyExpression(symbolKey)
+	for {
+		if ready, err := client.evaluateBool(waitCtx, sessionID, readyExpr); err == nil && ready {
+			return nil
+		} else if err != nil && errors.Is(err, ErrDisconnected) {
+			return err
+		}
+		pollCtx, cancelPoll := context.WithTimeout(waitCtx, 500*time.Millisecond)
+		_, err := services.next(pollCtx)
+		cancelPoll()
+		if err == nil {
+			return nil
+		}
+		if waitCtx.Err() != nil {
+			return waitCtx.Err()
+		}
+		if !errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+	}
 }

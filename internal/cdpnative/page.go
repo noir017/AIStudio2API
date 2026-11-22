@@ -160,6 +160,12 @@ func buildPageObjectExpression(symbolKey string) string {
 })()`, encodedSymbol)
 }
 
+// buildServiceReadyExpression 检查预加载脚本是否已将官网 WAA service 实例写入一次性 Symbol
+func buildServiceReadyExpression(symbolKey string) string {
+	encodedSymbol, _ := json.Marshal(symbolKey)
+	return fmt.Sprintf(`Boolean(window[Symbol.for(%s)])`, encodedSymbol)
+}
+
 func buildLocalStoragePreloadScript(origins []storageOrigin) (string, error) {
 	values := make(map[string]map[string]string, len(origins))
 	for _, origin := range origins {
