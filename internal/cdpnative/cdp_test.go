@@ -929,3 +929,63 @@ func TestDisconnectWakesWaitersAndMarksErr(t *testing.T) {
 		t.Fatal("waitLoad 在 WebSocket 断开后阻塞未返回")
 	}
 }
+
+func TestRestoreStoragePreservesExistingGoogleSession(t *testing.T) {
+	mock := newMockCDPServer(t, "/cdp/profile-existing")
+	future := float64(time.Now().Add(24 * time.Hour).Unix())
+	mock.mu.Lock()
+	mock.cookies = []map[string]any{
+		{
+			"name":     "SAPISID",
+			"value":    "fresh-sapisid",
+			"domain":   ".google.com",
+			"path":     "/",
+			"expires":  future,
+			"httpOnly": false,
+			"secure":   true,
+		},
+		{
+			"name":     "SIDCC",
+			"value":    "fresh-sidcc",
+			"domain":   ".google.com",
+			"path":     "/",
+			"expires":  future,
+			"httpOnly": false,
+			"secure":   false,
+		},
+	}
+	mock.mu.Unlock()
+
+	storagePath := filepath.Join(t.TempDir(), "storage-state.json")
+	staleState := `{"cookies":[{"name":"SAPISID","value":"stale-sapisid","domain":".google.com","path":"/","expires":1999999999,"secure":true},{"name":"SIDCC","value":"stale-sidcc","domain":".google.com","path":"/","expires":1999999999}]}`
+	if err := os.WriteFile(storagePath, []byte(staleState), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	worker, err := Start(ctx, Options{
+		Endpoint:         mock.endpoint(),
+		StorageStatePath: storagePath,
+		Model:            "gemini-2.5-flash",
+	})
+	if err != nil {
+		t.Fatalf("Start 失败: %v", err)
+	}
+	defer worker.Close()
+
+	mock.mu.Lock()
+	calls := mock.setCookiesCalls
+	mock.mu.Unlock()
+	if calls != 0 {
+		t.Fatalf("外部浏览器已有 Google 会话时不应调用 Network.setCookies，got %d 次", calls)
+	}
+
+	exported, err := worker.StorageCookies(ctx)
+	if err != nil {
+		t.Fatalf("StorageCookies 失败: %v", err)
+	}
+	if !strings.Contains(string(exported), "fresh-sidcc") || strings.Contains(string(exported), "stale-sidcc") {
+		t.Fatalf("StorageCookies 应保留外部浏览器最新 Cookie，got %s", string(exported))
+	}
+}

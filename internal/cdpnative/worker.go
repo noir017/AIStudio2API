@@ -205,8 +205,11 @@ func (worker *Worker) restoreStorage(ctx context.Context, sessionID string, stor
 		for index, cookie := range storage.Cookies {
 			worker.cookieOrder[cookie.key()] = index
 		}
-		if err := worker.client.installCookies(ctx, sessionID, storage.Cookies); err != nil {
-			return err
+		existing, err := worker.client.getStorageCookies(ctx, sessionID)
+		if err != nil || !hasGoogleAuthCookies(existing, time.Now()) {
+			if err := worker.client.installCookies(ctx, sessionID, storage.Cookies); err != nil {
+				return err
+			}
 		}
 	}
 	if len(storage.Origins) > 0 {

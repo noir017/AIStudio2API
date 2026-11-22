@@ -8,6 +8,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"time"
 )
 
 // SetCookies 按 storage state 的 Cookie 格式通过 Network.setCookies 写入外部浏览器
@@ -39,17 +40,9 @@ func (worker *Worker) StorageCookies(ctx context.Context) ([]byte, error) {
 	order := worker.cookieOrder
 	worker.mu.Unlock()
 
-	var stored struct {
-		Cookies []map[string]any `json:"cookies"`
-	}
-	if err := client.call(ctx, sessionID, "Storage.getCookies", nil, &stored); err != nil {
-		return nil, fmt.Errorf("导出外部浏览器 Cookie: %w", err)
-	}
-	cookies := make([]storageCookie, 0, len(stored.Cookies))
-	for _, raw := range stored.Cookies {
-		if cookie, ok := decodeCDPCookie(raw); ok {
-			cookies = append(cookies, cookie)
-		}
+	cookies, err := client.getStorageCookies(ctx, sessionID)
+	if err != nil {
+		return nil, err
 	}
 	rank := func(cookie storageCookie) int {
 		if index, installed := order[cookie.key()]; installed {
@@ -70,6 +63,44 @@ func (worker *Worker) StorageCookies(ctx context.Context) ([]byte, error) {
 		return cookies[left].Path < cookies[right].Path
 	})
 	return json.Marshal(cookies)
+}
+
+func (client *cdpClient) getStorageCookies(ctx context.Context, sessionID string) ([]storageCookie, error) {
+	var stored struct {
+		Cookies []map[string]any `json:"cookies"`
+	}
+	if err := client.call(ctx, sessionID, "Storage.getCookies", nil, &stored); err != nil {
+		return nil, fmt.Errorf("导出外部浏览器 Cookie: %w", err)
+	}
+	cookies := make([]storageCookie, 0, len(stored.Cookies))
+	for _, raw := range stored.Cookies {
+		if cookie, ok := decodeCDPCookie(raw); ok {
+			cookies = append(cookies, cookie)
+		}
+	}
+	return cookies, nil
+}
+
+// hasGoogleAuthCookies 判断外部浏览器当前是否已持有未过期的 Google 核心登录 Cookie
+func hasGoogleAuthCookies(cookies []storageCookie, now time.Time) bool {
+	nowUnix := float64(now.Unix())
+	for _, cookie := range cookies {
+		if cookie.Value == "" {
+			continue
+		}
+		if cookie.Expires > 0 && cookie.Expires <= nowUnix {
+			continue
+		}
+		domain := strings.ToLower(strings.TrimPrefix(strings.TrimSpace(cookie.Domain), "."))
+		if domain != "google.com" && !strings.HasSuffix(domain, ".google.com") {
+			continue
+		}
+		switch cookie.Name {
+		case "SAPISID", "__Secure-1PAPISID", "__Secure-3PAPISID", "SID", "__Secure-1PSID", "__Secure-3PSID":
+			return true
+		}
+	}
+	return false
 }
 
 func (client *cdpClient) installCookies(ctx context.Context, sessionID string, cookies []storageCookie) error {
