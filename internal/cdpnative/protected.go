@@ -56,7 +56,7 @@ const protectedPump = `
           continue;
         }
         if (failure) throw new Error(failure);
-        if (loaded) break;
+        if (loaded || xhr.readyState === 4) break;
         await next();
       }
       emit(JSON.stringify({done: true}));
@@ -89,6 +89,10 @@ const protectedSend = `function(id, url, headers, body, activate, bindingName) {
     for (const [name, value] of JSON.parse(headers)) xhr.setRequestHeader(name, value);
     xhr.onreadystatechange = xhr.onprogress = changed;
     xhr.onload = () => {
+      loaded = true;
+      changed();
+    };
+    xhr.onloadend = () => {
       loaded = true;
       changed();
     };

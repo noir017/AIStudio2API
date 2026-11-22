@@ -161,6 +161,10 @@ const generateArmFunction = `function(id, digest, head, tail, bindingName) {
               loaded = true;
               changed();
             });
+            xhr.addEventListener("loadend", () => {
+              loaded = true;
+              changed();
+            });
             xhr.addEventListener("error", () => {
               failure = "NetworkError when attempting to fetch resource.";
               changed();
