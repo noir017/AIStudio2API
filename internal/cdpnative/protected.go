@@ -82,7 +82,16 @@ const protectedSend = `function(id, url, headers, body, activate, bindingName) {
     wake?.();
     wake = null;
   };
-  const next = () => new Promise(resolve => wake = resolve);
+  const next = () => new Promise(resolve => {
+    const timer = setTimeout(() => {
+      wake = null;
+      resolve();
+    }, 250);
+    wake = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+  });
   const send = () => {
     xhr.open("POST", url);
     xhr.withCredentials = true;

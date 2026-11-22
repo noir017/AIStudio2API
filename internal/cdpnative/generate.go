@@ -140,7 +140,16 @@ const generateArmFunction = `function(id, digest, head, tail, bindingName) {
     wake?.();
     wake = null;
   };
-  const next = () => new Promise(resolve => wake = resolve);
+  const next = () => new Promise(resolve => {
+    const timer = setTimeout(() => {
+      wake = null;
+      resolve();
+    }, 250);
+    wake = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+  });
   makerSuite[page.key] = function(service) {
     makerSuite[page.key] = page.original;
     request.started = true;
@@ -575,11 +584,16 @@ func (worker *Worker) newChat(ctx context.Context, tab *chatTab) error {
 		return err
 	}
 	discard := fmt.Sprintf(`[...document.querySelectorAll('button')].some(node => node.checkVisibility({visibilityProperty: true}) && new RegExp(%q, 'i').test(node.innerText.trim()))`, discardButtonPattern)
-	if err := client.waitFor(ctx, tab.sessionID, discard, 5*time.Second); err != nil {
+	discardOrEmpty := fmt.Sprintf(`(%s) || (%s)`, discard, chatEmptyExpression)
+	if err := client.waitFor(ctx, tab.sessionID, discardOrEmpty, 5*time.Second); err != nil {
 		return fmt.Errorf("等待官网新对话确认: %w", err)
 	}
-	if err := worker.click(ctx, tab.sessionID, "button", discardButtonPattern, "官网 Discard and continue 按钮", pointerMoveDuration); err != nil {
-		return err
+	if hasDiscard, err := client.evaluateBool(ctx, tab.sessionID, discard); err != nil {
+		return fmt.Errorf("检查官网新对话确认按钮: %w", err)
+	} else if hasDiscard {
+		if err := worker.click(ctx, tab.sessionID, "button", discardButtonPattern, "官网 Discard and continue 按钮", pointerMoveDuration); err != nil {
+			return err
+		}
 	}
 	if err := client.waitFor(ctx, tab.sessionID, chatEmptyExpression, 10*time.Second); err != nil {
 		return fmt.Errorf("等待官网新对话: %w", err)
