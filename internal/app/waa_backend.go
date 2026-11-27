@@ -6,6 +6,7 @@ import (
 	"github.com/Mag1cFall/AIStudio2API/internal/aistudio"
 	"github.com/Mag1cFall/AIStudio2API/internal/api"
 	"github.com/Mag1cFall/AIStudio2API/internal/camoufoxnative"
+	"github.com/Mag1cFall/AIStudio2API/internal/cdpnative"
 	"github.com/Mag1cFall/AIStudio2API/internal/config"
 )
 
@@ -14,9 +15,10 @@ const camoufoxWorkerPath = "camoufox"
 
 // prepareWAABackend 按 WAA 后端返回 Worker 选项中的 Camoufox 路径与账户登录驱动，Camoufox 后端在后台准备 Camoufox
 func prepareWAABackend(cfg config.Config, requests *requestRegistry, accounts []*aistudio.Account, proxy string) (string, aistudio.IsolatedLoginDriver) {
-	removeStaleCamoufoxProfiles(requests)
 	login := camoufoxLoginDriver{proxy: proxy}
-	if cfg.WAABackend == config.WAABackendSpiderMonkey {
+	switch cfg.WAABackend {
+	case config.WAABackendSpiderMonkey:
+		removeStaleCamoufoxProfiles(requests)
 		requests.logStage("service", "INFO", api.LogStage{Name: "运行时装配", Step: 2, Steps: 3}, "使用 SpiderMonkey WAA 后端", "accounts", len(accounts))
 		for _, account := range accounts {
 			if err := camoufoxnative.RemoveAccountCache(account.StoragePath); err != nil {
@@ -24,10 +26,15 @@ func prepareWAABackend(cfg config.Config, requests *requestRegistry, accounts []
 			}
 		}
 		return "", login
+	case config.WAABackendCDP:
+		requests.logStage("service", "INFO", api.LogStage{Name: "运行时装配", Step: 2, Steps: 3}, "使用外部 CDP 浏览器 WAA 后端", "accounts", len(accounts))
+		return "", login
+	default:
+		removeStaleCamoufoxProfiles(requests)
+		requests.logStage("service", "INFO", api.LogStage{Name: "运行时装配", Step: 2, Steps: 3}, "使用 Camoufox WAA 后端", "accounts", len(accounts))
+		camoufoxnative.PrepareInBackground(proxy)
+		return camoufoxWorkerPath, login
 	}
-	requests.logStage("service", "INFO", api.LogStage{Name: "运行时装配", Step: 2, Steps: 3}, "使用 Camoufox WAA 后端", "accounts", len(accounts))
-	camoufoxnative.PrepareInBackground(proxy)
-	return camoufoxWorkerPath, login
 }
 
 // removeStaleCamoufoxProfiles 清理上次进程遗留的 Camoufox profile
@@ -40,16 +47,21 @@ func removeStaleCamoufoxProfiles(requests *requestRegistry) {
 }
 
 // newWAAWorker 启动账户的 Camoufox 或 SpiderMonkey Worker，Camoufox 尚未就绪时返回正在准备的进度或准备失败的原因
-func newWAAWorker(ctx context.Context, accountID string, options camoufoxnative.Options) (*aistudio.NativeWorker, error) {
-	if options.ExecutablePath == "" {
+// newWAAWorker 按配置的 WAA 后端启动账户 Worker（SpiderMonkey、Camoufox 或外部 CDP）
+func newWAAWorker(ctx context.Context, backend string, accountID string, options camoufoxnative.Options, cdpOptions cdpnative.Options) (*aistudio.NativeWorker, error) {
+	switch backend {
+	case config.WAABackendCDP:
+		return aistudio.NewCDPWorker(ctx, accountID, cdpOptions)
+	case config.WAABackendCamoufox:
+		path, err := camoufoxnative.ReadyPath()
+		if err != nil {
+			return nil, err
+		}
+		options.ExecutablePath = path
+		return aistudio.NewNativeWorker(ctx, accountID, options)
+	default:
 		return aistudio.NewSpiderMonkeyWorker(ctx, accountID, options)
 	}
-	path, err := camoufoxnative.ReadyPath()
-	if err != nil {
-		return nil, err
-	}
-	options.ExecutablePath = path
-	return aistudio.NewNativeWorker(ctx, accountID, options)
 }
 
 // camoufoxLoginDriver 在登录时准备 Camoufox，同一进程内的登录与生成服务共用一次进行中的下载

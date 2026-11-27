@@ -29,6 +29,8 @@ export interface Account {
   egress: string
   locale: string
   timezone: string
+  cdp_endpoint?: string
+  cdp_headers?: Record<string, string>
   models: string[]
   benefit_tier: string
   message: string
@@ -81,12 +83,16 @@ export interface AccountDraft {
   proxy: string
   locale: string
   timezone: string
+  cdp_endpoint?: string | undefined
+  cdp_headers?: Record<string, string> | undefined
 }
 
 export interface AccountLoginInput {
   proxy: string
   locale: string
   timezone: string
+  cdp_endpoint?: string | undefined
+  cdp_headers?: Record<string, string> | undefined
 }
 
 export interface ChromeImportProfile {
@@ -158,6 +164,8 @@ export interface CookieBrowser {
   error: string
   // restricted 是账户服务受限的原因，受限的账户不能导入
   restricted: string
+  // sign_in_required 为真时该账户已导入且需要重新登录，导入时原地更新它的认证状态
+  sign_in_required: boolean
 }
 
 interface AccountCounters {
@@ -463,7 +471,9 @@ export interface ServiceConfig {
   model_channels: string
   model_accounts: string
   api_key_accounts: string
-  waa_backend: 'camoufox' | 'spidermonkey'
+  waa_backend: 'camoufox' | 'spidermonkey' | 'cdp'
+  cdp_endpoint: string
+  cdp_headers: string
   media_output: 'inline' | 'url'
   media_base_url: string
   environment: string[]

@@ -119,6 +119,7 @@ export const messages: Record<TranslationKey, string> = {
   'common.empty': '데이터가 없습니다',
   'common.copy': '복사',
   'common.copied': '복사했습니다',
+  'common.clear': '지우기',
   'common.error': '요청에 실패했습니다',
   'accounts.empty': '계정이 없습니다',
   'accounts.emptyHint': '"계정 추가"를 눌러 로그인하거나 가져오세요',
@@ -138,6 +139,13 @@ export const messages: Record<TranslationKey, string> = {
   'accounts.proxy': '계정 프록시',
   'accounts.locale': '언어 및 지역',
   'accounts.timezone': '시간대',
+  'accounts.cdpEndpoint': '외부 CDP 엔드포인트(선택)',
+  'accounts.cdpEndpointPlaceholder':
+    '비워 두면 전역 기본값 사용 (예: http://127.0.0.1:9222/cdp/profile-a)',
+  'accounts.cdpHeaders': '외부 CDP 헤더(선택)',
+  'accounts.cdpHeadersPlaceholder':
+    '줄별 Key: Value 또는 JSON 객체 (예: Authorization: Bearer example-token)',
+  'accounts.cdpFallbackHint': '비워 두면 전역 기본값을 사용하며, 지우면 계정 재정의가 해제됩니다',
   'accounts.models': '모델',
   'accounts.tierUnknown': '알 수 없음',
   'accounts.direct': '직접 연결',
@@ -170,6 +178,8 @@ export const messages: Record<TranslationKey, string> = {
   'accounts.browserSignedOut': 'AI Studio에 로그인되지 않음',
   'accounts.rescan': '다시 찾기',
   'accounts.alreadyImported': '가져옴',
+  'accounts.signInUpdates':
+    '로그인 필요: 가져오면 이 계정의 쿠키를 업데이트하고 모델별 쿨다운은 유지됩니다',
   'accounts.remoteAddHelp': '다른 컴퓨터에서 로그인한 뒤 여기로 보내기',
   'accounts.pasteStep1':
     'AI Studio에 로그인된 브라우저에 Cookie-Editor 같은 쿠키 확장 프로그램 설치',
@@ -487,8 +497,18 @@ export const messages: Record<TranslationKey, string> = {
   'settings.waaBackend': 'WAA 백엔드',
   'settings.waaBackendCamoufox': 'Camoufox',
   'settings.waaBackendSpiderMonkey': 'SpiderMonkey',
+  'settings.waaBackendCDP': '외부 CDP 브라우저',
   'settings.waaBackendHelp':
-    'WAA는 AI Studio가 생성할 때마다 실행하는 검증 프로그램입니다. SpiderMonkey는 서비스 프로세스 안에서 실행해 Camoufox가 필요 없고 계정당 메모리를 약 150MB 사용합니다. Camoufox는 계정마다 백그라운드에서 AI Studio 페이지를 열어 실행하며 계정당 약 0.5GB를 사용하고 처음 사용할 때 다운로드됩니다. 계정 로그인에는 어느 쪽이든 브라우저가 필요',
+    'WAA는 AI Studio가 생성할 때마다 실행하는 검증 프로그램입니다. SpiderMonkey는 서비스 프로세스 안에서 실행해 Camoufox가 필요 없고 계정당 메모리를 약 150MB 사용합니다. Camoufox는 계정마다 백그라운드에서 AI Studio 페이지를 열어 실행하며 계정당 약 0.5GB를 사용하고 처음 사용할 때 다운로드됩니다. 외부 CDP 브라우저는 실행 중인 Chromium 기반 브라우저에 Chrome DevTools Protocol로 연결하며 Camoufox를 다운로드하거나 브라우저 프로세스를 시작·종료하지 않습니다. 계정 로그인에는 브라우저가 필요',
+  'settings.cdpEndpoint': '외부 CDP 엔드포인트',
+  'settings.cdpEndpointHelp':
+    '전역 기본 외부 CDP 디버깅 주소(http/https/ws/wss)입니다. 경로 접두사가 있는 리버스 프록시 뒤에서도 WebSocket 주소를 자동으로 재작성하며, 계정별로 개별 재정의할 수 있습니다',
+  'settings.cdpHeaders': '외부 CDP 사용자 지정 헤더',
+  'settings.cdpHeadersHelp':
+    'CDP 탐색과 WebSocket 핸드셰이크에 전송할 전역 HTTP 헤더(JSON 객체 또는 줄바꿈 구분 Key: Value)입니다. 계정별 동일 키가 전역 값을 덮어씁니다',
+  'settings.cdpHeadersPlaceholder': 'Authorization: Bearer example-token\nX-Profile: profile-a',
+  'settings.cdpHeadersShow': '외부 CDP 헤더 표시',
+  'settings.cdpHeadersHide': '외부 CDP 헤더 숨기기',
   'settings.helpFor': '{label} 설명',
   'settings.section.runtime': '실행 및 채널',
   'settings.section.models': '모델 및 프로토콜',

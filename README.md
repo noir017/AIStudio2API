@@ -73,7 +73,7 @@
 - **双通道**: 每个账户经 Playground 生成；Build 应用代理是旧通道，上游已对账户停用其生成（`PROXY_GENERATION_DISABLED`），默认关闭，可在 `UPSTREAM_CHANNELS` 中启用；启用后经 Build 发送的生成请求返回上游原因；免费账户的两个通道共用同一模型的每日请求次数
 - **Build 对话模型**: Build 对话面板可选的模型各提供一个 `<模型>-build`（如 `gemini-3.8-flash-build`），由 Build 写代码助手连同其系统提示词回复，支持函数调用、工具结果续接与 Google 搜索，用量计入 Build 对话额度（免费请求或 Google AI 订阅额度）；每个账户使用一个 Build 应用，同一段对话在应用中续接，服务重启后照常续接。⚠️ 这类模型的每次请求都带有 Build 写代码助手自带的系统提示词注入，回答风格、格式与身份会受其影响，请按用途自行评估
 - **多账户高并发**: 识别 Free、Pro、Ultra 与 Plus 权益，按实时模型目录在账户间轮询或优先复用
-- **两种 WAA 后端**: 默认由服务进程内的 SpiderMonkey（Firefox 的 JavaScript 引擎）生成官方 proof，运行时不下载、不启动浏览器；设置 `WAA_BACKEND=camoufox` 后由 Camoufox 持有官方 WAA 生命周期
+- **三种 WAA 后端**: 默认由服务进程内的 SpiderMonkey（Firefox 的 JavaScript 引擎）生成官方 proof，运行时不下载、不启动浏览器；设置 `WAA_BACKEND=camoufox` 后由 Camoufox 持有官方 WAA 生命周期；设置 `WAA_BACKEND=cdp` 可接入外部已运行的 Chromium 系 CDP 调试浏览器
 - **四套 API 协议**: OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 与 Gemini GenerateContent；Responses 支持 `/v1/responses/compact` 与 `compaction`、`compaction_trigger` 输入项的上下文压缩，Anthropic Messages 支持 `context_management` 的工具结果与思考清理和阈值压缩
 - **主流 Agent 客户端**: 支持 Claude Code、Codex、OpenCode、pi、omp、dsh、OpenClaw、Magpie、Antigravity CLI 的文件读写工具调用，Claude Code、Codex、omp 的原生联网搜索可直接使用
 
@@ -696,7 +696,9 @@ cp .env.example .env
 | `CONTINUATION_PROMPT` | 内置英文续写句 | 改写时与末尾 assistant 消息一起写入系统指令的提示词；设为空时末尾 assistant 消息改作 user 消息发送 |
 | `FIRST_EVENT_HEDGE` | `off` | 原请求迟迟没有首字时用空闲账户发起一个备用请求，取值 `off`、`auto` 或等待秒数 |
 | `FIRST_EVENT_HEDGE_MODELS` | `gemini-4-argon` | 发起备用请求的模型 ID，逗号分隔；备用请求同样计入账户额度 |
-| `WAA_BACKEND` | `spidermonkey` | WAA 运行的位置，`spidermonkey` 或 `camoufox` |
+| `WAA_BACKEND` | `spidermonkey` | WAA 运行的位置，`spidermonkey`、`camoufox` 或 `cdp` |
+| `CDP_ENDPOINT` | 空 | `WAA_BACKEND=cdp` 时的全局外部 CDP 调试地址（支持 `http://`、`https://`、`ws://`、`wss://`，如 `http://127.0.0.1:9222/cdp/profile-a`） |
+| `CDP_HEADERS` | 空 | `WAA_BACKEND=cdp` 时的全局外部 CDP 自定义请求头（JSON 对象或按行分隔的 `Key: Value`），同时应用于 `/json/version` 探测与 WebSocket 握手 |
 | `MEDIA_OUTPUT` | `inline` | Chat Completions 与 Messages 正文中生成图片与音频的引用方式，`inline` 或 `url` |
 | `MEDIA_BASE_URL` | 空 | 媒体 URL 使用的服务地址，例如 `https://ai.example.com`；留空时使用每个请求访问的地址，经反向代理时跟随 `X-Forwarded-Proto` |
 
@@ -716,8 +718,11 @@ cp .env.example .env
   - `auto` 按各模型与通道近 24 小时首字等待的 p95，请求少于 20 次的模型与通道不发起
   - 正整数为等待秒数，设置页选自定义时填入请求最多的模型的近期 p95
 - `WAA_BACKEND`：
-  - `spidermonkey` 在服务进程内的 SpiderMonkey 中运行 WAA，不下载也不启动 Camoufox；`camoufox` 在 Camoufox 页面运行 WAA；其他取值按 `spidermonkey`
+  - `spidermonkey` 在服务进程内的 SpiderMonkey 中运行 WAA，不下载也不启动 Camoufox；`camoufox` 在 Camoufox 页面运行 WAA；`cdp` 连接外部 CDP 浏览器运行 WAA（不下载也不启停外部浏览器进程，仅管理自建标签页）；其他取值按 `spidermonkey`
   - 未设置时，启动时按 `auth/` 确定后写入 `.env`：已有账户而没有 `auth/.waa-interpreters` 时为 `camoufox`，否则为 `spidermonkey`
+- `CDP_ENDPOINT` 与 `CDP_HEADERS`（以及账户级覆盖）：
+  - 当 `CDP_ENDPOINT` 为 HTTP/HTTPS 地址时，后端自动探测 `<endpoint>/json/version` 获取 `webSocketDebuggerUrl`；若外部浏览器位于带路径前缀的反向代理之后（例如 `http://127.0.0.1:9222/cdp/profile-a`），且浏览器返回的调试地址仍是 `ws://127.0.0.1:.../devtools/browser/...`，后端会自动将协议、主机、端口与路径前缀重写为与 `CDP_ENDPOINT` 一致的可达 WebSocket 地址（避免重复拼接前缀）
+  - 支持在单账户 `auth/<Google 邮箱>/account.json` 或 WebUI 账户设置中填写可选的 `cdp_endpoint` 与 `cdp_headers`：留空时回退全局默认；`cdp_headers` 与全局合并，同名键覆盖全局值，空值可清除全局同名键
 - `MEDIA_OUTPUT`：
   - `inline` 以 data URI 内联
   - `url` 按内容命名保存到 `runtime/media/`，以本服务的 `/media/<文件名>` URL 引用，该路径不校验 API key；目录总量超过 1 GB 时从最久未使用的文件开始删除
@@ -823,7 +828,7 @@ API 试用页的 HTML 预览运行在 `PREVIEW_LISTEN_ADDR` 提供的独立来�
 
 | 路径 | 内容 |
 | --- | --- |
-| `auth/<Google 邮箱>/account.json` | 账户邮箱、代理、语言、时区和启用状态 |
+| `auth/<Google 邮箱>/account.json` | 账户邮箱、代理、语言、时区、启用状态及可选的外部 CDP 覆盖（`cdp_endpoint`、`cdp_headers`） |
 | `auth/<Google 邮箱>/storage-state.json` | Google Cookie 与认证续签材料 |
 | `auth/<Google 邮箱>/runtime-state.json` | 权益等级、模型资格、冷却状态与资源所属账户 |
 | `auth/<Google 邮箱>/camoufox-cache/` | 该账户浏览器的网页缓存与启动缓存，服务停止时可删除 |
@@ -850,6 +855,8 @@ API 试用页的 HTML 预览运行在 `PREVIEW_LISTEN_ADDR` 提供的独立来�
 Go 负责编码、调度、流式解码与公开协议；`WAA_BACKEND=camoufox` 时，受 WAA 保护的 `GenerateContent` 通过账户固定指纹 Camoufox 页面发送，保留原生 Firefox TLS/HTTP2、请求头、Cookie 与页面指纹。
 
 `WAA_BACKEND=spidermonkey` 时，WAA 在服务进程内的 SpiderMonkey 中运行，按账户指纹模拟 Firefox 页面环境并以 Firefox 请求头直接发送，运行时不下载也不启动 Camoufox。账户页的浏览器登录仍使用 Camoufox，首次登录时按需准备。
+
+`WAA_BACKEND=cdp` 时，后端通过 Chrome DevTools Protocol 连接外部已运行的 Chromium 系浏览器，仅通过 `Target.createTarget` 创建并管理独立标签页，退出时仅关闭自建标签页且绝不启停外部浏览器进程，运行时同样不下载 Camoufox。
 
 ### 使用限制
 

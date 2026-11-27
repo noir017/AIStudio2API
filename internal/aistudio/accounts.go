@@ -172,6 +172,10 @@ type AccountConfig struct {
 	Locale   string `json:"locale"`
 	Timezone string `json:"timezone"`
 	AuthUser int    `json:"auth_user,omitempty"`
+	// CDPEndpoint 是该账户专属的外部 CDP 调试地址，未配置时回退全局 CDP_ENDPOINT
+	CDPEndpoint string `json:"cdp_endpoint,omitempty"`
+	// CDPHeaders 是该账户专属的外部 CDP 自定义请求头，与全局 CDP_HEADERS 合并并覆盖同名键
+	CDPHeaders map[string]string `json:"cdp_headers,omitempty"`
 }
 
 // ResourceBinding 记录上游资源的创建账户
@@ -365,6 +369,8 @@ type AccountStatus struct {
 	Egress      string                   `json:"egress"`
 	Locale      string                   `json:"locale"`
 	Timezone    string                   `json:"timezone"`
+	CDPEndpoint string                   `json:"cdp_endpoint,omitempty"`
+	CDPHeaders  map[string]string        `json:"cdp_headers,omitempty"`
 	Models      []string                 `json:"models"`
 	BenefitTier string                   `json:"benefit_tier"`
 	Cooldowns   map[string]CooldownState `json:"-"`
@@ -864,6 +870,15 @@ func (c AccountConfig) Validate() error {
 	if err := appconfig.ValidateProxy(c.Proxy); err != nil {
 		return fmt.Errorf("账户 proxy 无效: %w", err)
 	}
+	if err := appconfig.ValidateCDPEndpoint(c.CDPEndpoint); err != nil {
+		return fmt.Errorf("账户 cdp_endpoint 无效: %w", err)
+	}
+	for key := range c.CDPHeaders {
+		trimmed := strings.TrimSpace(key)
+		if trimmed == "" || strings.ContainsAny(trimmed, " \t\r\n:") {
+			return fmt.Errorf("账户 cdp_headers 请求头名称无效: %q", key)
+		}
+	}
 	return nil
 }
 
@@ -873,6 +888,46 @@ func (a *Account) EffectiveProxy(globalProxy string) string {
 		return strings.TrimSpace(a.Config.Proxy)
 	}
 	return a.PoolProxy(globalProxy)
+}
+
+// EffectiveCDPEndpoint 返回账户专属外部 CDP 地址，未配置时回退全局默认地址
+func (a *Account) EffectiveCDPEndpoint(globalEndpoint string) string {
+	if endpoint := strings.TrimSpace(a.Config.CDPEndpoint); endpoint != "" {
+		return endpoint
+	}
+	return strings.TrimSpace(globalEndpoint)
+}
+
+// EffectiveCDPHeaders 返回合并全局与账户级覆盖后的外部 CDP 自定义请求头
+func (a *Account) EffectiveCDPHeaders(globalHeaders http.Header) http.Header {
+	return MergeCDPHeaders(globalHeaders, a.Config.CDPHeaders)
+}
+
+// MergeCDPHeaders 合并全局与账户级 CDP 自定义请求头，账户级同名键覆盖全局值，空值删除对应键
+func MergeCDPHeaders(globalHeaders http.Header, override map[string]string) http.Header {
+	if len(globalHeaders) == 0 && len(override) == 0 {
+		return nil
+	}
+	merged := make(http.Header, len(globalHeaders)+len(override))
+	for key, values := range globalHeaders {
+		merged[http.CanonicalHeaderKey(key)] = slices.Clone(values)
+	}
+	for key, value := range override {
+		canonical := http.CanonicalHeaderKey(strings.TrimSpace(key))
+		if canonical == "" {
+			continue
+		}
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			merged.Del(canonical)
+			continue
+		}
+		merged.Set(canonical, trimmed)
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
 }
 
 // SetPoolProxy 设置账户加入账户池前使用的代理池绑定
@@ -2934,6 +2989,8 @@ func (p *AccountPool) Status() []AccountStatus {
 			Egress:      account.EffectiveProxy(""),
 			Locale:      account.Config.Locale,
 			Timezone:    account.Config.Timezone,
+			CDPEndpoint: account.Config.CDPEndpoint,
+			CDPHeaders:  maps.Clone(account.Config.CDPHeaders),
 			Models:      models,
 			BenefitTier: tier,
 			Cooldowns:   cloneCooldowns(account.runtime.Cooldowns),

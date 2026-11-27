@@ -121,6 +121,7 @@ export const messages: Record<TranslationKey, string> = {
   'common.empty': 'Keine Daten',
   'common.copy': 'Kopieren',
   'common.copied': 'Kopiert',
+  'common.clear': 'Leeren',
   'common.error': 'Anfrage fehlgeschlagen',
   'accounts.empty': 'Keine Konten',
   'accounts.emptyHint': 'Über „Konto hinzufügen“ anmelden oder importieren',
@@ -140,6 +141,14 @@ export const messages: Record<TranslationKey, string> = {
   'accounts.proxy': 'Konto-Proxy',
   'accounts.locale': 'Sprache und Region',
   'accounts.timezone': 'Zeitzone',
+  'accounts.cdpEndpoint': 'Externer CDP-Endpunkt (optional)',
+  'accounts.cdpEndpointPlaceholder':
+    'Leer für globalen Standard, z. B. http://127.0.0.1:9222/cdp/profile-a',
+  'accounts.cdpHeaders': 'Externe CDP-Header (optional)',
+  'accounts.cdpHeadersPlaceholder':
+    'Ein Key: Value pro Zeile oder JSON-Objekt, z. B. Authorization: Bearer example-token',
+  'accounts.cdpFallbackHint':
+    'Leer lassen für globale Standardwerte; leeren, um Überschreibungen zu entfernen',
   'accounts.models': 'Modelle',
   'accounts.tierUnknown': 'Unbekannt',
   'accounts.direct': 'Direkte Verbindung',
@@ -172,6 +181,8 @@ export const messages: Record<TranslationKey, string> = {
   'accounts.browserSignedOut': 'Nicht bei AI Studio angemeldet',
   'accounts.rescan': 'Erneut suchen',
   'accounts.alreadyImported': 'Importiert',
+  'accounts.signInUpdates':
+    'Anmeldung erforderlich: Beim Import werden die Cookies dieses Kontos aktualisiert, die Cooldowns der Modelle bleiben erhalten',
   'accounts.remoteAddHelp': 'Auf einem anderen Computer anmelden und hierher senden',
   'accounts.pasteStep1':
     'Im bei AI Studio angemeldeten Browser eine Cookie-Erweiterung wie Cookie-Editor installieren',
@@ -490,8 +501,18 @@ export const messages: Record<TranslationKey, string> = {
   'settings.waaBackend': 'WAA-Backend',
   'settings.waaBackendCamoufox': 'Camoufox',
   'settings.waaBackendSpiderMonkey': 'SpiderMonkey',
+  'settings.waaBackendCDP': 'Externer CDP-Browser',
   'settings.waaBackendHelp':
-    'WAA ist das Prüfprogramm, das AI Studio vor jeder Generierung ausführt. SpiderMonkey führt es im Dienstprozess ohne Camoufox aus und braucht etwa 150 MB Arbeitsspeicher pro Konto; Camoufox führt es pro Konto in einer im Hintergrund geöffneten AI-Studio-Seite aus, braucht etwa 0,5 GB pro Konto und wird bei der ersten Nutzung heruntergeladen. Die Kontoanmeldung nutzt in beiden Fällen einen Browser',
+    'WAA ist das Prüfprogramm, das AI Studio vor jeder Generierung ausführt. SpiderMonkey führt es im Dienstprozess ohne Camoufox aus und braucht etwa 150 MB Arbeitsspeicher pro Konto; Camoufox führt es pro Konto in einer im Hintergrund geöffneten AI-Studio-Seite aus, braucht etwa 0,5 GB pro Konto und wird bei der ersten Nutzung heruntergeladen; der externe CDP-Browser verbindet sich per Chrome DevTools Protocol mit einem laufenden Chromium-Browser, ohne Camoufox herunterzuladen oder den Browserprozess zu starten/beenden. Die Kontoanmeldung nutzt weiterhin einen Browser',
+  'settings.cdpEndpoint': 'Externer CDP-Endpunkt',
+  'settings.cdpEndpointHelp':
+    'Globaler externer CDP-Debugging-Endpunkt (http/https/ws/wss). Hinter einem Reverse-Proxy mit Pfadpräfix werden WebSocket-URLs automatisch umgeschrieben; pro Konto überschreibbar',
+  'settings.cdpHeaders': 'Externe CDP-Header',
+  'settings.cdpHeadersHelp':
+    'Globale HTTP-Header für CDP-Abfrage und WebSocket-Handshake als JSON-Objekt oder zeilenweise Key: Value-Paare. Kontospezifische Schlüssel überschreiben globale Werte',
+  'settings.cdpHeadersPlaceholder': 'Authorization: Bearer example-token\nX-Profile: profile-a',
+  'settings.cdpHeadersShow': 'Externe CDP-Header anzeigen',
+  'settings.cdpHeadersHide': 'Externe CDP-Header ausblenden',
   'settings.helpFor': 'Info zu {label}',
   'settings.section.runtime': 'Laufzeit & Kanäle',
   'settings.section.models': 'Modelle & Protokolle',

@@ -76,8 +76,9 @@ func newRuntime(
 	if _, err := proxies.Assign(); err != nil {
 		return nil, nil, nil, err
 	}
+	globalCDPHeaders, _ := config.ParseCDPHeaders(cfg.CDPHeaders)
 	workers := newAccountWorkerManager(
-		pool, accounts, requests, camoufoxPath, globalProxy, cfg.InitTimeout,
+		pool, accounts, requests, cfg.WAABackend, camoufoxPath, cfg.CDPEndpoint, globalCDPHeaders, globalProxy, cfg.InitTimeout,
 		cfg.WarmWorkerLimit, cfg.MaxActiveWorkers, cfg.WarmStartupConcurrency,
 	)
 	transport, err := aistudio.NewMakerSuiteHTTPTransport(aistudio.HTTPTransportOptions{
@@ -1430,6 +1431,7 @@ func (service *trackedService) CountTokens(ctx context.Context, request aistudio
 	}
 	defer cancel()
 	count, requestErr := service.service.CountTokens(requestCtx, request)
+	requestErr = endedRequestError(requestCtx, requestErr)
 	api.SetAccessLogError(requestCtx, requestErr)
 	return count, requestErr
 }
@@ -1442,7 +1444,8 @@ func (service *trackedService) GenerateTitle(ctx context.Context, request aistud
 		return "", err
 	}
 	defer cancel()
-	return service.service.(aistudio.TitleService).GenerateTitle(requestCtx, request)
+	title, err := service.service.(aistudio.TitleService).GenerateTitle(requestCtx, request)
+	return title, endedRequestError(requestCtx, err)
 }
 
 // GenerateImage 生成 Imagen 图片并登记请求目标与账户
@@ -1454,6 +1457,7 @@ func (service *trackedService) GenerateImage(ctx context.Context, request aistud
 	}
 	defer cancel()
 	images, requestErr := service.service.(aistudio.ImageService).GenerateImage(requestCtx, request)
+	requestErr = endedRequestError(requestCtx, requestErr)
 	api.SetAccessLogError(requestCtx, requestErr)
 	return images, requestErr
 }
@@ -1467,6 +1471,7 @@ func (service *trackedService) CreateDecision(ctx context.Context, request aistu
 	}
 	defer cancel()
 	result, requestErr := service.service.(aistudio.DecisionService).CreateDecision(requestCtx, request)
+	requestErr = endedRequestError(requestCtx, requestErr)
 	api.SetAccessLogError(requestCtx, requestErr)
 	service.requests.log("service", "WARN", "Decision 请求使用 AI Studio 官网中隐藏的模型", "model", request.Model)
 	return result, requestErr
@@ -1484,6 +1489,7 @@ func (service *trackedService) GenerateVideo(ctx context.Context, request aistud
 	}
 	defer cancel()
 	if err := service.videoCooling(requestCtx, request); err != nil {
+		err = endedRequestError(requestCtx, err)
 		api.SetAccessLogError(requestCtx, err)
 		return aistudio.VideoOperation{}, err
 	}
@@ -1495,6 +1501,7 @@ func (service *trackedService) GenerateVideo(ctx context.Context, request aistud
 		return service.dataRequestContext(context.Background())
 	}
 	operation, requestErr := service.service.(aistudio.VideoService).GenerateVideo(requestCtx, request)
+	requestErr = endedRequestError(requestCtx, requestErr)
 	api.SetAccessLogError(requestCtx, requestErr)
 	return operation, requestErr
 }
@@ -1556,6 +1563,7 @@ func (service *trackedService) GetGenerateVideoOperation(ctx context.Context, op
 	}
 	defer cancel()
 	operation, requestErr := service.service.(aistudio.VideoService).GetGenerateVideoOperation(requestCtx, operationID)
+	requestErr = endedRequestError(requestCtx, requestErr)
 	api.SetAccessLogError(requestCtx, requestErr)
 	return operation, requestErr
 }
@@ -1568,6 +1576,7 @@ func (service *trackedService) ListVideos(ctx context.Context) ([]aistudio.Video
 	}
 	defer cancel()
 	videos, requestErr := service.service.(aistudio.VideoService).ListVideos(requestCtx)
+	requestErr = endedRequestError(requestCtx, requestErr)
 	api.SetAccessLogError(requestCtx, requestErr)
 	return videos, requestErr
 }
@@ -1580,6 +1589,7 @@ func (service *trackedService) DeleteVideo(ctx context.Context, operationID stri
 	}
 	defer cancel()
 	requestErr := service.service.(aistudio.VideoService).DeleteVideo(requestCtx, operationID)
+	requestErr = endedRequestError(requestCtx, requestErr)
 	api.SetAccessLogError(requestCtx, requestErr)
 	return requestErr
 }
@@ -1591,24 +1601,30 @@ func (service *trackedService) DownloadFile(ctx context.Context, fileID string) 
 		return aistudio.MediaStream{}, err
 	}
 	media, requestErr := service.service.(aistudio.VideoService).DownloadFile(requestCtx, fileID)
+	requestErr = endedRequestError(requestCtx, requestErr)
 	api.SetAccessLogError(requestCtx, requestErr)
 	if requestErr != nil {
 		cancel()
 		return aistudio.MediaStream{}, requestErr
 	}
-	media.Body = &trackedMediaReadCloser{body: media.Body, cancel: cancel}
+	media.Body = &trackedMediaReadCloser{body: media.Body, ctx: requestCtx, cancel: cancel}
 	return media, requestErr
 }
 
 type trackedMediaReadCloser struct {
 	body   io.ReadCloser
+	ctx    context.Context
 	cancel context.CancelFunc
 	once   sync.Once
 	err    error
 }
 
 func (closer *trackedMediaReadCloser) Read(target []byte) (int, error) {
-	return closer.body.Read(target)
+	read, err := closer.body.Read(target)
+	if err != io.EOF {
+		err = endedRequestError(closer.ctx, err)
+	}
+	return read, err
 }
 
 func (closer *trackedMediaReadCloser) Close() error {
@@ -2053,6 +2069,7 @@ func (service *trackedService) Generate(ctx context.Context, request aistudio.Ge
 	service.requests.start(request, cancel)
 	resourceID, err := service.pool.ResourceIDForContents(requestCtx, request.Contents)
 	if err != nil {
+		err = endedRequestError(requestCtx, err)
 		api.SetAccessLogError(requestCtx, err)
 		cancel()
 		service.requests.finish(request.ID, finalRequestState(err))
@@ -2386,7 +2403,7 @@ func (service *trackedService) generateWithRetry(
 		if activity != nil {
 			api.SetAccessLogUpstreamBytes(requestCtx, activity.bytes.Load())
 		}
-		err = accountsUnavailable(err, retry.rejectionUntil)
+		err = accountsUnavailable(endedRequestError(requestCtx, err), retry.rejectionUntil)
 		api.SetAccessLogError(requestCtx, err)
 		service.requests.finish(request.ID, finalRequestState(err))
 		select {
@@ -3015,6 +3032,14 @@ func (service *trackedService) dataRequestContext(ctx context.Context) (context.
 	}, nil
 }
 
+// endedRequestError 在请求所属的生成服务已停止时把非空的 err 换成生成服务已停止的错误，其余原样返回 err
+func endedRequestError(ctx context.Context, err error) error {
+	if err != nil && aistudio.ServiceStopped(ctx) {
+		return &serviceStoppedError{}
+	}
+	return err
+}
+
 // roundDeadlineContext 是期限可在自动续写每轮开始时重新计时的请求上下文，到期时 Err 为 context.DeadlineExceeded
 type roundDeadlineContext struct {
 	parent   context.Context
@@ -3109,7 +3134,7 @@ func (service *trackedService) forwardEvents(
 	defer stallTimer.Stop()
 	var stall <-chan time.Time
 	finishFromContext := func() {
-		requestErr = requestCtx.Err()
+		requestErr = endedRequestError(requestCtx, requestCtx.Err())
 		state = finalRequestState(requestErr)
 		if requestErr == nil || terminal || clientCtx.Err() != nil {
 			return
@@ -3224,6 +3249,7 @@ func (service *trackedService) forwardEvents(
 			continue
 		}
 		if event.Kind == aistudio.EventError {
+			event.Err = endedRequestError(requestCtx, event.Err)
 			event.Err = service.settleStreamError(requestCtx, requestID, requestedModelID, serving.Load(), event.Err)
 			requestErr = event.Err
 			state = finalRequestState(event.Err)

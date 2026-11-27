@@ -196,6 +196,8 @@ type AdminAccount struct {
 	Egress      string   `json:"egress"`
 	Locale      string   `json:"locale"`
 	Timezone    string   `json:"timezone"`
+	CDPEndpoint string            `json:"cdp_endpoint,omitempty"`
+	CDPHeaders  map[string]string `json:"cdp_headers,omitempty"`
 	Models      []string `json:"models"`
 	BenefitTier string   `json:"benefit_tier"`
 	Message     string   `json:"message"`
@@ -255,6 +257,8 @@ type AccountInput struct {
 	Proxy    string `json:"proxy"`
 	Locale   string `json:"locale"`
 	Timezone string `json:"timezone"`
+	CDPEndpoint string            `json:"cdp_endpoint,omitempty"`
+	CDPHeaders  map[string]string `json:"cdp_headers,omitempty"`
 }
 
 // AccountCreateInput 表示浏览器登录的账户环境
@@ -262,6 +266,8 @@ type AccountCreateInput struct {
 	Proxy    string `json:"proxy"`
 	Locale   string `json:"locale"`
 	Timezone string `json:"timezone"`
+	CDPEndpoint string            `json:"cdp_endpoint,omitempty"`
+	CDPHeaders  map[string]string `json:"cdp_headers,omitempty"`
 }
 
 // CookieImportInput 表示识别 Cookie 中账户时提交的 Cookie 文本与出口代理
@@ -294,6 +300,8 @@ type CookieBrowser struct {
 
 	// DeviceBound 表示 Cookie 带 __Secure-1PSIDRTS，会话绑定原浏览器所在的设备，导入的副本约 2 小时内失效
 	DeviceBound bool `json:"device_bound"`
+	// SignInRequired 表示该账户已导入且需要重新登录，导入时原地更新它的认证状态
+	SignInRequired bool `json:"sign_in_required"`
 }
 
 // ChromeImportInput 表示批量导入的 Chrome 账号与账户环境
@@ -302,6 +310,8 @@ type ChromeImportInput struct {
 	Proxy      string   `json:"proxy"`
 	Locale     string   `json:"locale"`
 	Timezone   string   `json:"timezone"`
+	CDPEndpoint string            `json:"cdp_endpoint,omitempty"`
+	CDPHeaders  map[string]string `json:"cdp_headers,omitempty"`
 }
 
 // RuntimeConfig 表示全局运行配置
@@ -356,6 +366,8 @@ type RuntimeConfig struct {
 	ModelAccounts             string               `json:"model_accounts"`
 	APIKeyAccounts            string               `json:"api_key_accounts"`
 	WAABackend                string               `json:"waa_backend"`
+	CDPEndpoint               string               `json:"cdp_endpoint"`
+	CDPHeaders                string               `json:"cdp_headers"`
 	MediaOutput               string               `json:"media_output"`
 	MediaBaseURL              string               `json:"media_base_url"`
 	Environment               []string             `json:"environment"`

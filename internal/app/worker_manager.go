@@ -14,6 +14,8 @@ import (
 	"github.com/Mag1cFall/AIStudio2API/internal/aistudio"
 	"github.com/Mag1cFall/AIStudio2API/internal/api"
 	"github.com/Mag1cFall/AIStudio2API/internal/camoufoxnative"
+	"github.com/Mag1cFall/AIStudio2API/internal/cdpnative"
+	"github.com/Mag1cFall/AIStudio2API/internal/config"
 	"github.com/Mag1cFall/AIStudio2API/internal/waa/prooftime"
 )
 
@@ -28,7 +30,10 @@ type accountWorkerManager struct {
 	requests       *requestRegistry
 	refresher      *authRuntimeRefresher
 	proxyFailed    func(proxy string, accountID string, err error)
+	waaBackend     string
 	camoufox       string
+	cdpEndpoint    string
+	cdpHeaders     http.Header
 	globalProxy    string
 	initTimeout    time.Duration
 	warmTarget     atomic.Int64
@@ -58,6 +63,7 @@ type accountWorker struct {
 	id             string
 	label          string
 	config         camoufoxnative.Options
+	cdpConfig      cdpnative.Options
 	worker         *aistudio.NativeWorker
 	bootstrapModel string
 	runtimeLease   *aistudio.AccountRuntimeLease
@@ -88,6 +94,7 @@ type accountWorkerPreparer struct {
 type accountWorkerUpdate struct {
 	account *accountWorker
 	config  camoufoxnative.Options
+	cdp     cdpnative.Options
 	label   string
 }
 
@@ -196,7 +203,10 @@ func newAccountWorkerManager(
 	pool *aistudio.AccountPool,
 	accounts []*aistudio.Account,
 	requests *requestRegistry,
+	waaBackend string,
 	camoufoxPath string,
+	cdpEndpoint string,
+	cdpHeaders http.Header,
 	globalProxy string,
 	initTimeout time.Duration,
 	warmTarget int,
@@ -205,7 +215,8 @@ func newAccountWorkerManager(
 ) *accountWorkerManager {
 	lifecycle, cancel := context.WithCancel(context.Background())
 	manager := &accountWorkerManager{
-		pool: pool, accounts: make(map[string]*accountWorker, len(accounts)), requests: requests, camoufox: camoufoxPath,
+		pool: pool, accounts: make(map[string]*accountWorker, len(accounts)), requests: requests,
+		waaBackend: waaBackend, camoufox: camoufoxPath, cdpEndpoint: cdpEndpoint, cdpHeaders: cdpHeaders,
 		globalProxy: globalProxy, initTimeout: initTimeout,
 		openings:  make(map[string]chan struct{}),
 		lifecycle: lifecycle, cancel: cancel, signal: make(chan struct{}), dispatch: newDispatchQueue(),
@@ -233,7 +244,7 @@ func (manager *accountWorkerManager) SetCapacity(warmTarget int, maxActive int, 
 
 // setLimits 保存 Worker 数量上限，纯 Go 后端同时启动的 Worker 数只受峰值上限约束
 func (manager *accountWorkerManager) setLimits(warmTarget int, maxActive int, startupConcurrency int) {
-	if manager.camoufox == "" {
+	if manager.waaBackend == config.WAABackendSpiderMonkey {
 		startupConcurrency = maxActive
 	}
 	manager.warmTarget.Store(int64(warmTarget))
@@ -584,7 +595,7 @@ func (manager *accountWorkerManager) prepareUpdate(
 		return nil, fmt.Errorf("WAA worker 账户不存在: %s", account.ID)
 	}
 	update := &accountWorkerUpdate{
-		account: worker, config: manager.workerConfigFor(account, config), label: config.Label,
+		account: worker, config: manager.workerConfigFor(account, config), cdp: manager.workerCDPConfigFor(account, config), label: config.Label,
 	}
 	worker.startupMu.Lock()
 	worker.mu.Lock()
@@ -603,6 +614,7 @@ func (manager *accountWorkerManager) prepareUpdate(
 func (update *accountWorkerUpdate) Commit() {
 	update.account.mu.Lock()
 	update.account.config = update.config
+	update.account.cdpConfig = update.cdp
 	update.account.label = update.label
 	update.account.mu.Unlock()
 	update.account.startupMu.Unlock()
@@ -662,7 +674,12 @@ func (manager *accountWorkerManager) Remove(accountID string) error {
 }
 
 func (manager *accountWorkerManager) newAccountWorker(account *aistudio.Account) *accountWorker {
-	return &accountWorker{id: account.ID, label: account.Config.Label, config: manager.workerConfig(account)}
+	return &accountWorker{
+		id:        account.ID,
+		label:     account.Config.Label,
+		config:    manager.workerConfig(account),
+		cdpConfig: manager.workerCDPConfigFor(account, account.Config),
+	}
 }
 
 func (manager *accountWorkerManager) workerConfig(account *aistudio.Account) camoufoxnative.Options {
@@ -685,6 +702,22 @@ func (manager *accountWorkerManager) workerConfigFor(
 		Proxy:            proxy,
 		Headless:         true,
 		AuthUser:         config.AuthUser,
+	}
+}
+
+func (manager *accountWorkerManager) workerCDPConfigFor(
+	account *aistudio.Account,
+	acctConfig aistudio.AccountConfig,
+) cdpnative.Options {
+	endpoint := strings.TrimSpace(acctConfig.CDPEndpoint)
+	if endpoint == "" {
+		endpoint = strings.TrimSpace(manager.cdpEndpoint)
+	}
+	return cdpnative.Options{
+		Endpoint:         endpoint,
+		Headers:          aistudio.MergeCDPHeaders(manager.cdpHeaders, acctConfig.CDPHeaders),
+		StorageStatePath: account.StoragePath,
+		AuthUser:         acctConfig.AuthUser,
 	}
 }
 
@@ -1131,6 +1164,7 @@ func (manager *accountWorkerManager) startReservedWorker(
 	startedAt := time.Now()
 	label := account.label
 	options := account.config
+	cdpOptions := account.cdpConfig
 	runtimeLease := account.runtimeLease
 	ownsLease := false
 	account.mu.Unlock()
@@ -1178,7 +1212,9 @@ func (manager *accountWorkerManager) startReservedWorker(
 	options.StartupProgress = func(stage camoufoxnative.StartupStage) {
 		logStep(workerStartupProgress(stage))
 	}
-	worker, initErr := newWAAWorker(initCtx, account.id, options)
+	cdpOptions.Model = bootstrapModel
+	cdpOptions.StartupProgress = options.StartupProgress
+	worker, initErr := newWAAWorker(initCtx, manager.waaBackend, account.id, options, cdpOptions)
 	if initErr == nil {
 		if initErr = manager.rememberPageHeaders(account.id, worker); initErr != nil {
 			initErr = errors.Join(initErr, worker.Close())

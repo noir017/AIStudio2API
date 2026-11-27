@@ -68,6 +68,8 @@ type chromeImportRequest struct {
 	Proxy    string `json:"proxy"`
 	Locale   string `json:"locale"`
 	Timezone string `json:"timezone"`
+	CDPEndpoint string            `json:"cdp_endpoint,omitempty"`
+	CDPHeaders  map[string]string `json:"cdp_headers,omitempty"`
 }
 
 // cookieImportItem 是 Cookie 导入中的一个账户：识别出的邮箱、Cookie 文本或浏览器调试地址与会话序号
@@ -84,6 +86,8 @@ type cookieImportRequest struct {
 	Proxy    string             `json:"proxy"`
 	Locale   string             `json:"locale"`
 	Timezone string             `json:"timezone"`
+	CDPEndpoint string            `json:"cdp_endpoint,omitempty"`
+	CDPHeaders  map[string]string `json:"cdp_headers,omitempty"`
 }
 
 // accountTasks 保存账户任务，任务列表变化时推送给管理事件流
@@ -315,6 +319,7 @@ func (s *server) handleImportChromeAccounts(w http.ResponseWriter, r *http.Reque
 			accounts, err := s.config.Admin.ImportChromeAccounts(ctx, ChromeImportInput{
 				AccountIDs: []string{input.Accounts[index].ID},
 				Proxy:      input.Proxy, Locale: input.Locale, Timezone: input.Timezone,
+				CDPEndpoint: input.CDPEndpoint, CDPHeaders: input.CDPHeaders,
 			})
 			if err != nil {
 				return AdminAccount{}, err
@@ -340,13 +345,13 @@ func (s *server) handleImportCookieAccounts(w http.ResponseWriter, r *http.Reque
 	}
 	s.startAccountTask(w, r, task, func(ctx context.Context, update accountTaskUpdate) {
 		runAccountTaskItems(ctx, update, len(input.Items), func(ctx context.Context, index int) (AdminAccount, error) {
-			return s.importCookieAccount(ctx, input.Items[index], input.Proxy, input.Locale, input.Timezone)
+			return s.importCookieAccount(ctx, input.Items[index], input.Proxy, input.Locale, input.Timezone, input.CDPEndpoint, input.CDPHeaders)
 		})
 	})
 }
 
 // importCookieAccount 读取调试浏览器的 Cookie 或解析 Cookie 文本，以识别会话时得到的邮箱为标签导入第 auth_user 个会话登录的账户
-func (s *server) importCookieAccount(ctx context.Context, item cookieImportItem, proxy string, locale string, timezone string) (AdminAccount, error) {
+func (s *server) importCookieAccount(ctx context.Context, item cookieImportItem, proxy string, locale string, timezone string, cdpEndpoint string, cdpHeaders map[string]string) (AdminAccount, error) {
 	cookies := item.Cookies
 	if address := strings.TrimSpace(item.CDP); address != "" {
 		ReportTaskStep(ctx, TaskStepReading)
@@ -361,6 +366,6 @@ func (s *server) importCookieAccount(ctx context.Context, item cookieImportItem,
 		return AdminAccount{}, err
 	}
 	return s.config.Admin.ImportAccountState(ctx, AccountStateInput{
-		Label: item.Email, Proxy: proxy, Locale: locale, Timezone: timezone, AuthUser: item.AuthUser, StorageState: state,
+		Label: item.Email, Proxy: proxy, Locale: locale, Timezone: timezone, CDPEndpoint: cdpEndpoint, CDPHeaders: cdpHeaders, AuthUser: item.AuthUser, StorageState: state,
 	})
 }

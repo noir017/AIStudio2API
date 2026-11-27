@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -195,11 +196,16 @@ func (admin *runtimeAdmin) accountEnvironment(ctx context.Context, proxy string,
 func (admin *runtimeAdmin) CreateAccount(ctx context.Context, input api.AccountCreateInput, view *camoufoxnative.LiveView) (_ api.AdminAccount, err error) {
 	accountConfig := aistudio.DefaultAccountConfig("")
 	accountConfig.Proxy = strings.TrimSpace(input.Proxy)
+	accountConfig.CDPEndpoint = strings.TrimSpace(input.CDPEndpoint)
+	accountConfig.CDPHeaders = normalizeAccountCDPHeaders(input.CDPHeaders)
 	timezone, err := accountTimezone(input.Timezone)
 	if err != nil {
 		return api.AdminAccount{}, invalidAccount(err)
 	}
 	if err := config.ValidateProxy(accountConfig.Proxy); err != nil {
+		return api.AdminAccount{}, invalidAccount(err)
+	}
+	if err := config.ValidateCDPEndpoint(accountConfig.CDPEndpoint); err != nil {
 		return api.AdminAccount{}, invalidAccount(err)
 	}
 	environment := admin.accountEnvironment(ctx, admin.effectiveProxy(accountConfig.Proxy), input.Locale, timezone)()
@@ -312,7 +318,7 @@ func (admin *runtimeAdmin) CookieBrowsers(ctx context.Context, proxy string) ([]
 		admin.requests.log("auth", "ERROR", "查找本机调试浏览器失败", "error", err)
 		return nil, err
 	}
-	existing := admin.accountIDs()
+	statuses := admin.pool.Status()
 	browsers := make([][]api.CookieBrowser, len(addresses))
 	var group sync.WaitGroup
 	for index, address := range addresses {
@@ -330,7 +336,7 @@ func (admin *runtimeAdmin) CookieBrowsers(ctx context.Context, proxy string) ([]
 			if err != nil && !browser.SignedOut {
 				browser.Error = err.Error()
 			}
-			browsers[index] = cookieAccountEntries(browser, accounts, existing)
+			browsers[index] = cookieAccountEntries(browser, accounts, statuses)
 		})
 	}
 	group.Wait()
@@ -365,7 +371,7 @@ func (admin *runtimeAdmin) DiscoverCookieAccounts(ctx context.Context, input api
 		admin.requests.log("auth", "ERROR", "识别 Cookie 中的账户失败", "error", err)
 		return nil, invalidAccount(err)
 	}
-	return cookieAccountEntries(api.CookieBrowser{DeviceBound: deviceBoundSession(state)}, accounts, admin.accountIDs()), nil
+	return cookieAccountEntries(api.CookieBrowser{DeviceBound: deviceBoundSession(state)}, accounts, admin.pool.Status()), nil
 }
 
 // deviceBoundSession 表示 Cookie 带 __Secure-1PSIDRTS，会话绑定签发它的设备
@@ -373,19 +379,23 @@ func deviceBoundSession(state aistudio.StorageState) bool {
 	return slices.ContainsFunc(state.Cookies, func(cookie aistudio.StateCookie) bool { return cookie.Name == "__Secure-1PSIDRTS" })
 }
 
-// cookieAccountEntries 以 template 为模板为每个会话账户生成一项并标记已导入与服务受限的账户，没有账户时只返回 template
-func cookieAccountEntries(template api.CookieBrowser, accounts []chromeauth.CookieAccount, existing map[string]string) []api.CookieBrowser {
+// cookieAccountEntries 以 template 为模板为每个会话账户生成一项，按账户池状态 statuses 标记已导入、需要重新登录与服务受限的账户，没有账户时只返回 template
+func cookieAccountEntries(template api.CookieBrowser, accounts []chromeauth.CookieAccount, statuses []aistudio.AccountStatus) []api.CookieBrowser {
 	if len(accounts) == 0 {
 		return []api.CookieBrowser{template}
+	}
+	existing := make(map[string]aistudio.AccountStatus, len(statuses))
+	for _, status := range statuses {
+		existing[strings.ToLower(strings.TrimSpace(status.ID))] = status
 	}
 	entries := make([]api.CookieBrowser, len(accounts))
 	for index, account := range accounts {
 		entry := template
 		entry.Email, entry.AuthUser, entry.Restricted = account.Email, account.AuthUser, account.Restricted
-		if restricted, imported := existing[account.Email]; imported {
-			entry.Imported = true
-			if restricted != "" {
-				entry.Restricted = restricted
+		if status, imported := existing[account.Email]; imported {
+			entry.Imported, entry.SignInRequired = true, status.State == aistudio.AccountAuthRequired
+			if status.State == aistudio.AccountRestricted && status.Message != "" {
+				entry.Restricted = status.Message
 			}
 		}
 		entries[index] = entry
@@ -488,6 +498,8 @@ func (admin *runtimeAdmin) ImportChromeAccounts(ctx context.Context, input api.C
 		accountConfig := aistudio.DefaultAccountConfig(email)
 		accountConfig.Proxy = accountProxy
 		accountConfig.Locale, accountConfig.Timezone = locale, timezone
+		accountConfig.CDPEndpoint = strings.TrimSpace(input.CDPEndpoint)
+		accountConfig.CDPHeaders = normalizeAccountCDPHeaders(input.CDPHeaders)
 		if err := accountConfig.Validate(); err != nil {
 			return nil, invalidAccount(err)
 		}
@@ -557,6 +569,8 @@ func (admin *runtimeAdmin) ImportAccountState(ctx context.Context, input api.Acc
 	accountConfig := aistudio.DefaultAccountConfig(label)
 	accountConfig.AuthUser = input.AuthUser
 	accountConfig.Proxy = strings.TrimSpace(input.Proxy)
+	accountConfig.CDPEndpoint = strings.TrimSpace(input.CDPEndpoint)
+	accountConfig.CDPHeaders = normalizeAccountCDPHeaders(input.CDPHeaders)
 	exit := environment()
 	accountConfig.Locale, accountConfig.Timezone = exit.Locale, exit.Timezone
 	if err := accountConfig.Validate(); err != nil {
@@ -799,6 +813,8 @@ func (admin *runtimeAdmin) saveAccountConfig(ctx context.Context, accountID stri
 	accountConfig.Enabled = input.Enabled
 	accountConfig.Proxy = strings.TrimSpace(input.Proxy)
 	accountConfig.Locale = strings.TrimSpace(input.Locale)
+	accountConfig.CDPEndpoint = strings.TrimSpace(input.CDPEndpoint)
+	accountConfig.CDPHeaders = normalizeAccountCDPHeaders(input.CDPHeaders)
 	timezone, err := accountTimezone(input.Timezone)
 	if err != nil {
 		return api.AdminAccount{}, nil, invalidAccount(err)
@@ -812,7 +828,8 @@ func (admin *runtimeAdmin) saveAccountConfig(ctx context.Context, accountID stri
 		return api.AdminAccount{}, nil, err
 	}
 	if current.Enabled != accountConfig.Enabled && current.Proxy == accountConfig.Proxy &&
-		current.Locale == accountConfig.Locale && current.Timezone == accountConfig.Timezone {
+		current.Locale == accountConfig.Locale && current.Timezone == accountConfig.Timezone &&
+		current.CDPEndpoint == accountConfig.CDPEndpoint && maps.Equal(current.CDPHeaders, accountConfig.CDPHeaders) {
 		updated, err := admin.setAccountEnabled(accountID, accountConfig.Enabled)
 		return updated, nil, err
 	}
@@ -1305,6 +1322,7 @@ func adminAccountDTO(status aistudio.AccountStatus) api.AdminAccount {
 	account := api.AdminAccount{
 		ID: status.ID, Label: status.Label, Enabled: status.Enabled, State: string(status.State),
 		Proxy: status.Proxy, Egress: status.Egress, Locale: status.Locale, Timezone: status.Timezone,
+		CDPEndpoint: status.CDPEndpoint, CDPHeaders: maps.Clone(status.CDPHeaders),
 		Models: status.Models, BenefitTier: status.BenefitTier, Message: status.Message,
 		PairingRenewedAt: pairingRenewedAt(status.Directory),
 		Transition:       string(status.Transition), ActiveRequests: status.ActiveRequests, CatalogError: status.CatalogError,
@@ -1326,6 +1344,24 @@ func accountTimezone(value string) (string, error) {
 		return "", fmt.Errorf("账户 timezone 无效: %q", value)
 	}
 	return timezone, nil
+}
+
+func normalizeAccountCDPHeaders(headers map[string]string) map[string]string {
+	if len(headers) == 0 {
+		return nil
+	}
+	cleaned := make(map[string]string, len(headers))
+	for key, value := range headers {
+		trimmedKey := strings.TrimSpace(key)
+		if trimmedKey == "" {
+			continue
+		}
+		cleaned[trimmedKey] = strings.TrimSpace(value)
+	}
+	if len(cleaned) == 0 {
+		return nil
+	}
+	return cleaned
 }
 
 func invalidAccount(err error) error {
@@ -1401,6 +1437,8 @@ func (admin *runtimeAdmin) UpdateRuntimeConfig(_ context.Context, value api.Runt
 		ModelAccounts:          strings.TrimSpace(value.ModelAccounts),
 		APIKeyAccounts:         strings.TrimSpace(value.APIKeyAccounts),
 		WAABackend:             value.WAABackend,
+		CDPEndpoint:            strings.TrimSpace(value.CDPEndpoint),
+		CDPHeaders:             strings.TrimSpace(value.CDPHeaders),
 		MediaOutput:            strings.ToLower(strings.TrimSpace(value.MediaOutput)),
 		MediaBaseURL:           strings.TrimSpace(value.MediaBaseURL),
 	}.KeepEnvironment(saved)
@@ -1756,6 +1794,8 @@ func runtimeConfigDTO(cfg config.Config) api.RuntimeConfig {
 		ModelAccounts:          cfg.ModelAccounts,
 		APIKeyAccounts:         cfg.APIKeyAccounts,
 		WAABackend:             cfg.WAABackend,
+		CDPEndpoint:            cfg.CDPEndpoint,
+		CDPHeaders:             cfg.CDPHeaders,
 		MediaOutput:            cfg.MediaOutput,
 		MediaBaseURL:           cfg.MediaBaseURL,
 		Environment:            append([]string{}, cfg.Environment...),

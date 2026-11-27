@@ -27,6 +27,8 @@ type AccountStateInput struct {
 	Proxy        string                `json:"-"`
 	Locale       string                `json:"locale"`
 	Timezone     string                `json:"timezone"`
+	CDPEndpoint  string                `json:"cdp_endpoint,omitempty"`
+	CDPHeaders   map[string]string     `json:"cdp_headers,omitempty"`
 	AuthUser     int                   `json:"auth_user"`
 	StorageState aistudio.StorageState `json:"storage_state"`
 	Fingerprint  json.RawMessage       `json:"fingerprint,omitempty"`

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,19 +14,31 @@ import (
 	"github.com/Mag1cFall/AIStudio2API/internal/aistudio"
 	"github.com/Mag1cFall/AIStudio2API/internal/api"
 	"github.com/Mag1cFall/AIStudio2API/internal/camoufoxnative"
+	"github.com/Mag1cFall/AIStudio2API/internal/cdpnative"
 	"github.com/Mag1cFall/AIStudio2API/internal/chromeauth"
 )
 
 type chromeCookieRefreshFunc func(context.Context, aistudio.AuthSource, aistudio.ChromeOAuthMaterial, string) ([]aistudio.StateCookie, *aistudio.BoundSession, error)
+type cdpCookieRefreshFunc func(context.Context, cdpnative.CookieSyncOptions) ([]aistudio.StateCookie, error)
 
 // boundRefreshThreshold 是 Chromium 主动刷新 DBSC 会话时绑定 Cookie 的剩余时间
 const boundRefreshThreshold = 2 * time.Minute
+
+// defaultCDPCookieSyncCooldown 限制同一账户通过外部 CDP 拉取 Cookie 的最小间隔，避免异常时高频刷浏览器
+const defaultCDPCookieSyncCooldown = 10 * time.Minute
 
 // authRuntimeRefresher 使用账户保存的 Chrome OAuth 材料原地续签
 type authRuntimeRefresher struct {
 	pool          *aistudio.AccountPool
 	refresh       chromeCookieRefreshFunc
 	importCurrent func(context.Context, aistudio.AuthSource, aistudio.ChromeOAuthMaterial, string) (aistudio.StorageState, error)
+	refreshCDP    cdpCookieRefreshFunc
+	cdpEndpoint   string
+	cdpHeaders    http.Header
+	cdpCooldown   time.Duration
+	now           func() time.Time
+	cdpMu         sync.Mutex
+	lastCDPSync   map[string]time.Time
 	reset         func(string) error
 	prepareWorker func(*aistudio.Account, aistudio.AccountConfig) (*accountWorkerUpdate, error)
 	// rotate 刷新账户的 DBSC 会话并返回响应 Cookie
@@ -159,11 +172,80 @@ func newAuthRuntimeRefresher(
 	return &authRuntimeRefresher{
 		pool:    workers.pool,
 		refresh: chromeauth.Refresh, importCurrent: importCurrentChromeState,
+		refreshCDP: fetchCDPCookies, cdpEndpoint: workers.cdpEndpoint, cdpHeaders: workers.cdpHeaders,
+		cdpCooldown: defaultCDPCookieSyncCooldown, now: time.Now, lastCDPSync: make(map[string]time.Time),
 		reset: workers.Reset, prepareWorker: workers.prepareUpdate,
 		rotate: chromeauth.RotateBoundCookies, mergeWorker: workers.MergeCookies,
 		globalProxy: globalProxy,
 		requests:    requests,
 	}
+}
+
+// fetchCDPCookies 通过外部 CDP 浏览器拉取最新 Cookie 并解码为 StorageState Cookie 列表
+func fetchCDPCookies(ctx context.Context, options cdpnative.CookieSyncOptions) ([]aistudio.StateCookie, error) {
+	raw, err := cdpnative.FetchCookies(ctx, options)
+	if err != nil {
+		return nil, err
+	}
+	var cookies []aistudio.StateCookie
+	if err := json.Unmarshal(raw, &cookies); err != nil {
+		return nil, fmt.Errorf("解析外部 CDP Cookie: %w", err)
+	}
+	return cookies, nil
+}
+
+func (refresher *authRuntimeRefresher) currentTime() time.Time {
+	if refresher.now != nil {
+		return refresher.now()
+	}
+	return time.Now()
+}
+
+func (refresher *authRuntimeRefresher) effectiveCDPCooldown() time.Duration {
+	if refresher.cdpCooldown > 0 {
+		return refresher.cdpCooldown
+	}
+	return defaultCDPCookieSyncCooldown
+}
+
+func (refresher *authRuntimeRefresher) cdpEndpointFor(account *aistudio.Account) string {
+	if account != nil {
+		if endpoint := strings.TrimSpace(account.Config.CDPEndpoint); endpoint != "" {
+			return endpoint
+		}
+	}
+	return strings.TrimSpace(refresher.cdpEndpoint)
+}
+
+func (refresher *authRuntimeRefresher) cdpSyncCoolingDown(accountID string, now time.Time) (bool, time.Duration) {
+	refresher.cdpMu.Lock()
+	defer refresher.cdpMu.Unlock()
+	last, ok := refresher.lastCDPSync[accountID]
+	if !ok {
+		return false, 0
+	}
+	cooldown := refresher.effectiveCDPCooldown()
+	elapsed := now.Sub(last)
+	if elapsed < cooldown {
+		return true, cooldown - elapsed
+	}
+	return false, 0
+}
+
+func (refresher *authRuntimeRefresher) claimCDPSync(accountID string, now time.Time) (bool, time.Duration) {
+	refresher.cdpMu.Lock()
+	defer refresher.cdpMu.Unlock()
+	if refresher.lastCDPSync == nil {
+		refresher.lastCDPSync = make(map[string]time.Time)
+	}
+	if last, ok := refresher.lastCDPSync[accountID]; ok {
+		cooldown := refresher.effectiveCDPCooldown()
+		if elapsed := now.Sub(last); elapsed < cooldown {
+			return false, cooldown - elapsed
+		}
+	}
+	refresher.lastCDPSync[accountID] = now
+	return true, 0
 }
 
 // importCurrentChromeState 从原来源中更新同一 Google 账户的认证材料
@@ -389,6 +471,7 @@ func (refresher *authRuntimeRefresher) Refresh(ctx context.Context, generation u
 	account := lease.Account()
 	startedAt := time.Now()
 	refreshed := false
+	usedCDP := false
 	logRenewal := func(level string, stage api.LogStage, message string, attrs ...any) {
 		if startup, _ := ctx.Value(workerStartupRenewalKey{}).(bool); !startup {
 			stage.Name = "账户认证续签"
@@ -403,7 +486,25 @@ func (refresher *authRuntimeRefresher) Refresh(ctx context.Context, generation u
 			return err
 		}
 		if extension.OAuth == nil {
-			return fmt.Errorf("账户 %s 没有续签材料，需要重新登录", account.ID)
+			endpoint := refresher.cdpEndpointFor(account)
+			if endpoint == "" || refresher.refreshCDP == nil {
+				return fmt.Errorf("账户 %s 没有续签材料，需要重新登录", account.ID)
+			}
+			if allowed, remaining := refresher.claimCDPSync(account.ID, refresher.currentTime()); !allowed {
+				return fmt.Errorf("账户 %s 外部 CDP Cookie 同步冷却中（剩余 %s）", account.ID, remaining.Round(time.Second))
+			}
+			cookies, syncErr := refresher.refreshCDP(ctx, cdpnative.CookieSyncOptions{
+				Endpoint: endpoint,
+				Headers:  aistudio.MergeCDPHeaders(refresher.cdpHeaders, account.Config.CDPHeaders),
+				AuthUser: account.Config.AuthUser,
+			})
+			if syncErr != nil {
+				return fmt.Errorf("外部 CDP 同步账户 %s Cookie: %w", account.ID, syncErr)
+			}
+			state.Cookies = cookies
+			usedCDP = true
+			_, err = aistudio.NewSigner().Authorization(*state)
+			return err
 		}
 		proxy := account.EffectiveProxy(refresher.globalProxy)
 		var cookies []aistudio.StateCookie
@@ -447,8 +548,10 @@ func (refresher *authRuntimeRefresher) Refresh(ctx context.Context, generation u
 	if !refreshed {
 		return nil
 	}
-	if err := setCookieAuthUser(lease, 0, refresher.prepareWorker); err != nil {
-		return fmt.Errorf("保存账户 %s 会话序号: %w", account.ID, err)
+	if !usedCDP {
+		if err := setCookieAuthUser(lease, 0, refresher.prepareWorker); err != nil {
+			return fmt.Errorf("保存账户 %s 会话序号: %w", account.ID, err)
+		}
 	}
 	logRenewal("INFO", api.LogStage{State: "completed"}, "账户认证续签完成", "duration", time.Since(startedAt))
 	return nil
@@ -510,7 +613,15 @@ func (refresher *authRuntimeRefresher) Available(ctx context.Context) bool {
 	if err != nil {
 		return false
 	}
-	return extension.OAuth != nil
+	if extension.OAuth != nil {
+		return true
+	}
+	account := lease.Account()
+	if refresher.refreshCDP == nil || refresher.cdpEndpointFor(account) == "" {
+		return false
+	}
+	coolingDown, _ := refresher.cdpSyncCoolingDown(account.ID, refresher.currentTime())
+	return !coolingDown
 }
 
 func authenticationFailed(response *aistudio.RPCResponse) bool {

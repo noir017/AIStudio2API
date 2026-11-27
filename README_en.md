@@ -73,7 +73,7 @@ The three projects connect to AI Studio, the Gemini web app and Antigravity, and
 - **Dual Channels**: Every account generates through the Playground; the Build app proxy is the legacy channel whose generation upstream has disabled for accounts (`PROXY_GENERATION_DISABLED`), off by default and enabled in `UPSTREAM_CHANNELS`; once enabled, generation requests sent through Build return the upstream reason; on free accounts both channels share one daily request count per model
 - **Build Chat Models**: Every model selectable in the Build chat panel is also listed as `<model>-build` (for example `gemini-3.8-flash-build`), answered by the Build code assistant with its system prompt, with function calling, tool-result continuation, and Google Search, and billed to the Build chat quota (free requests or the Google AI subscription); each account uses one Build app, and the same conversation continues in that app, including after a service restart. ⚠️ Every request to these models carries the Build code assistant's own injected system prompt, which shapes the answer's style, format, and persona; evaluate whether that fits your use
 - **High-Concurrency Multi-Account**: Detects Free, Pro, Ultra, and Plus benefits and routes across accounts by the live model catalog with round-robin or fill-first
-- **Two WAA Backends**: By default, SpiderMonkey (the Firefox JavaScript engine) generates the official proof inside the service process and no browser is downloaded or launched at runtime; with `WAA_BACKEND=camoufox`, Camoufox holds the official WAA lifecycle
+- **Three WAA Backends**: By default, SpiderMonkey (the Firefox JavaScript engine) generates the official proof inside the service process and no browser is downloaded or launched at runtime; with `WAA_BACKEND=camoufox`, Camoufox holds the official WAA lifecycle; with `WAA_BACKEND=cdp`, an external running Chromium-based CDP browser holds the WAA lifecycle
 - **Four API Protocols**: OpenAI Chat Completions, OpenAI Responses, Anthropic Messages, and Gemini GenerateContent; Responses supports context compaction through `/v1/responses/compact` and `compaction` and `compaction_trigger` input items, and Anthropic Messages supports `context_management` tool-result and thinking clearing and threshold compaction
 - **Mainstream Agent Clients**: Works with Claude Code, Codex, OpenCode, pi, omp, dsh, OpenClaw, Magpie, and Antigravity CLI, including file read and write tool calls; native web search works in Claude Code, Codex, and omp
 
@@ -696,7 +696,9 @@ Process environment variables override the same keys in `.env`, and those settin
 | `CONTINUATION_PROMPT` | built-in English sentence | Prompt written into the system instruction together with the trailing assistant message when rewriting; when set empty, the trailing assistant message is sent as a user message |
 | `FIRST_EVENT_HEDGE` | `off` | When a request has no first token for a while, send a backup request on an idle account; `off`, `auto`, or a wait in seconds |
 | `FIRST_EVENT_HEDGE_MODELS` | `gemini-4-argon` | Comma-separated model IDs that get backup requests; backup requests also count against account quota |
-| `WAA_BACKEND` | `spidermonkey` | Where WAA runs: `spidermonkey` or `camoufox` |
+| `WAA_BACKEND` | `spidermonkey` | Where WAA runs: `spidermonkey`, `camoufox`, or `cdp` |
+| `CDP_ENDPOINT` | empty | Global external CDP debugging endpoint when `WAA_BACKEND=cdp` (`http://`, `https://`, `ws://`, or `wss://`, e.g. `http://127.0.0.1:9222/cdp/profile-a`) |
+| `CDP_HEADERS` | empty | Global custom HTTP headers for external CDP requests (JSON object or line-separated `Key: Value`), sent on both `/json/version` discovery and the WebSocket handshake |
 | `MEDIA_OUTPUT` | `inline` | How Chat Completions and Messages include generated images and audio: `inline` or `url` |
 | `MEDIA_BASE_URL` | empty | Service address used in media URLs, such as `https://ai.example.com`; empty uses the address of each request and follows `X-Forwarded-Proto` behind a reverse proxy |
 
@@ -716,8 +718,11 @@ Notes:
   - `auto` waits for the p95 of each model and channel over the last 24 hours, and models with fewer than 20 requests are not hedged
   - A positive integer is the wait in seconds; choosing Custom in settings fills in the recent p95 of the busiest model
 - `WAA_BACKEND`:
-  - `spidermonkey` runs WAA in SpiderMonkey inside the service process and neither downloads nor starts Camoufox; `camoufox` runs WAA in a Camoufox page; any other value means `spidermonkey`
+  - `spidermonkey` runs WAA in SpiderMonkey inside the service process and neither downloads nor starts Camoufox; `camoufox` runs WAA in a Camoufox page; `cdp` connects to an external CDP browser (never downloads Camoufox or starts/stops the external browser process, and manages only the tabs it creates); any other value means `spidermonkey`
   - When unset, startup picks it from `auth/` and writes it to `.env`: `camoufox` if `auth/` already has accounts but no `auth/.waa-interpreters`, otherwise `spidermonkey`
+- `CDP_ENDPOINT` and `CDP_HEADERS` (plus per-account overrides):
+  - When `CDP_ENDPOINT` is an HTTP/HTTPS URL, the backend queries `<endpoint>/json/version` to resolve `webSocketDebuggerUrl`. Behind a path-prefixed reverse proxy (for example `http://127.0.0.1:9222/cdp/profile-a`), if the browser returns a loopback `ws://127.0.0.1:.../devtools/browser/...` URL, the backend automatically rewrites its scheme, host, port, and path prefix to match `CDP_ENDPOINT` without duplicating an existing prefix
+  - Optional per-account `cdp_endpoint` and `cdp_headers` can be set in `auth/<Google email>/account.json` or the Accounts page in WebUI; leaving them empty falls back to the global defaults. Per-account `cdp_headers` merge with global headers, overriding matching keys (and an empty value removes that inherited key)
 - `MEDIA_OUTPUT`:
   - `inline` embeds a data URI
   - `url` saves the file under `runtime/media/`, named by its content, and links to it at `/media/<file>` on this service, a path that does not check the API key; when the directory exceeds 1 GB, the least recently used files are deleted first
@@ -822,7 +827,7 @@ Authentication files are stored in `auth/` by default:
 
 | Path | Contents |
 | --- | --- |
-| `auth/<Google email>/account.json` | Account email, proxy, locale, timezone, and enabled state |
+| `auth/<Google email>/account.json` | Account email, proxy, locale, timezone, enabled state, and optional external CDP overrides (`cdp_endpoint`, `cdp_headers`) |
 | `auth/<Google email>/storage-state.json` | Google cookies and authentication renewal material |
 | `auth/<Google email>/runtime-state.json` | Benefit tier, model eligibility, cooldowns, and resource ownership |
 | `auth/<Google email>/camoufox-cache/` | Web and startup cache of that account's browser; can be deleted while the service is stopped |
@@ -849,6 +854,8 @@ This project uses [Camoufox](https://camoufox.com/) to reduce automation detecti
 Go handles encoding, scheduling, streaming decode, and public protocols. With `WAA_BACKEND=camoufox`, WAA-protected `GenerateContent` requests are sent by the account's fingerprinted Camoufox page, preserving the native Firefox TLS/HTTP2 stack, headers, cookies, and page fingerprint.
 
 With `WAA_BACKEND=spidermonkey`, WAA runs in SpiderMonkey inside the service process, emulates the Firefox page environment from the account fingerprint, and sends requests with Firefox request headers; Camoufox is neither downloaded nor started at runtime. Browser login on the Accounts page still uses Camoufox and prepares it on first login.
+
+With `WAA_BACKEND=cdp`, the backend connects to an already-running external Chromium-based browser via the Chrome DevTools Protocol, opens and manages only its own tabs via `Target.createTarget`, closes only those tabs on shutdown without ever starting or stopping the external browser process, and does not download Camoufox at runtime.
 
 ### Limitations
 
